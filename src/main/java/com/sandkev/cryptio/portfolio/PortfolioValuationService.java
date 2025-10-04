@@ -13,6 +13,7 @@ import java.math.RoundingMode;
 import java.sql.ResultSet;
 import java.util.*;
 import java.util.stream.Collectors;
+import org.springframework.lang.Nullable;
 
 @Service
 public class PortfolioValuationService {
@@ -159,6 +160,110 @@ public class PortfolioValuationService {
                             List<PieSlice> pie,
                             BigDecimal totalValue,
                             List<String> unresolvedSymbols) {}
+
+    // add near your existing DTOs
+    public record TokenValue(String exchange, String asset, BigDecimal qty, BigDecimal price, BigDecimal value) {}
+    public record Dashboard2(
+            String vsCurrency,
+            List<PlatformTotal> platformTotals,        // same as before
+            List<TokenValue> tokens,                   // filtered & sorted for selected platform (or ALL)
+            List<PieSlice> pie,                        // top N + "Other"
+            BigDecimal totalValue,
+            List<String> unresolvedSymbols) {}
+
+    public Dashboard2 valueDashboard2(String account, String vsCurrency,
+                                      @Nullable String platformFilter,   // e.g. "binance" or null for all
+                                      @Nullable BigDecimal minValue,     // absolute (e.g. 25 GBP), nullable
+                                      @Nullable BigDecimal minPct,       // e.g. 0.005 = 0.5%, nullable
+                                      int pieTopN) {
+        vsCurrency = vsCurrency.toLowerCase(java.util.Locale.ROOT);
+
+        // 1) pull latest balances per exchange+asset; optionally filter by platform in SQL
+        final var sql = """
+        select exchange, asset, sum(total_amt) as qty
+        from v_latest_balance
+        where account = ?
+          %s
+        group by exchange, asset
+        """.formatted(platformFilter != null ? "and exchange = ?" : "");
+        var rows = platformFilter != null
+                ? jdbc.query(sql, (rs,i) -> new Object[]{ rs.getString(1), rs.getString(2), rs.getBigDecimal(3) }, account, platformFilter)
+                : jdbc.query(sql, (rs,i) -> new Object[]{ rs.getString(1), rs.getString(2), rs.getBigDecimal(3) }, account);
+
+        // 2) resolve + fetch prices once
+        var symbols = new java.util.LinkedHashSet<String>();
+        for (var r : rows) symbols.add((String) r[1]);
+        var symToId = new java.util.LinkedHashMap<String,String>();
+        var unresolved = new java.util.ArrayList<String>();
+        for (var s : symbols)
+            resolver.resolve(s).ifPresentOrElse(id -> symToId.put(s,id), () -> unresolved.add(s));
+        var idToPrice = symToId.isEmpty() ? java.util.Map.<String,java.math.BigDecimal>of()
+                : prices.getSimplePrice(new java.util.LinkedHashSet<>(symToId.values()), vsCurrency);
+
+        // 3) compute per-platform subtotals & token values
+        var platformSubtotal = new java.util.LinkedHashMap<String, java.math.BigDecimal>();
+        var tokenValuesAll   = new java.util.ArrayList<TokenValue>();
+        java.math.BigDecimal grand = java.math.BigDecimal.ZERO;
+
+        for (var r : rows) {
+            String ex  = (String) r[0];
+            String sym = (String) r[1];
+            java.math.BigDecimal qty = (java.math.BigDecimal) r[2];
+            String id = symToId.get(sym);
+            var price = (id == null) ? null : idToPrice.get(id);
+            if (price == null) continue;
+
+            var value = qty.multiply(price, MC);
+            platformSubtotal.merge(ex, value, (a,b) -> a.add(b, MC));
+            tokenValuesAll.add(new TokenValue(ex, sym, qty, price, value));
+            grand = grand.add(value, MC);
+        }
+
+        final BigDecimal grandFinal = grand;  // <-- make it effectively final
+        // 4) thresholds
+        java.util.function.Predicate<TokenValue> passThreshold = tv -> {
+            if (tv.value() == null) return false;
+            if (minValue != null && tv.value().compareTo(minValue) < 0) return false;
+            if (minPct != null && grandFinal.signum() > 0) {               // use grandFinal here
+                var pct = tv.value().divide(grandFinal, MC);
+                if (pct.compareTo(minPct) < 0) return false;
+            }
+            return true;
+        };
+
+        // Drilldown tokens: if platformFilter set, only that platform
+        var tokensFiltered = tokenValuesAll.stream()
+                .filter(tv -> platformFilter == null || tv.exchange().equalsIgnoreCase(platformFilter))
+                .filter(passThreshold)
+                .sorted(java.util.Comparator.comparing(TokenValue::value, java.util.Comparator.nullsLast(java.util.Comparator.naturalOrder())).reversed())
+                .toList();
+
+        // 5) pie: across ALL or filtered platform? (match your sheet: overall)
+        var pieMap = new java.util.LinkedHashMap<String, java.math.BigDecimal>();
+        tokenValuesAll.forEach(tv -> pieMap.merge(tv.asset(), tv.value(), (a,b) -> a.add(b, MC)));
+        var pieSorted = pieMap.entrySet().stream()
+                .sorted(java.util.Map.Entry.<String,java.math.BigDecimal>comparingByValue().reversed())
+                .toList();
+
+        var pieSlices = new java.util.ArrayList<PieSlice>();
+        java.math.BigDecimal other = java.math.BigDecimal.ZERO;
+        for (int i=0; i<pieSorted.size(); i++) {
+            var e = pieSorted.get(i);
+            if (i < Math.max(pieTopN, 1)) {
+                pieSlices.add(new PieSlice(e.getKey(), e.getValue()));
+            } else {
+                other = other.add(e.getValue(), MC);
+            }
+        }
+        if (other.signum() > 0) pieSlices.add(new PieSlice("Other", other));
+
+        var subtotals = platformSubtotal.entrySet().stream()
+                .map(e -> new PlatformTotal(e.getKey(), e.getValue()))
+                .sorted(java.util.Comparator.comparing(PlatformTotal::exchange))
+                .toList();
+
+        return new Dashboard2(vsCurrency, subtotals, tokensFiltered, pieSlices, grand, unresolved);
+    }
 
 
 }

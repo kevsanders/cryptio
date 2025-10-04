@@ -1,28 +1,4 @@
-<!-- src/main/resources/templates/dashboard.html -->
-<!DOCTYPE html>
-<html xmlns:th="http://www.thymeleaf.org">
-<head>
-    <meta charset="utf-8"/>
-    <title>Portfolio Dashboard</title>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0"></script>
-    <style>
-    :root { --gap: 14px; }
-    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 24px; color:#222; }
-    .bar { display:flex; gap:var(--gap); align-items:center; margin-bottom:var(--gap); flex-wrap: wrap; }
-    input, select, button { padding:.45rem .7rem; border:1px solid #d0d0d0; border-radius:8px; background:#fafafa; }
-    button { cursor:pointer; }
-    button:hover { background:#f0f0f0; }
-    .cards { display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:var(--gap); margin: 18px 0; }
-    .card { border:1px solid #ececec; border-radius:12px; padding:16px; background:#fff; box-shadow:0 1px 4px rgba(0,0,0,.04);}
-    .card h3 { margin:0 0 6px 0; font-size:1rem; font-weight:600; }
-    .money { font-weight:700; font-size:1.25rem; }
-    .muted { color:#777; font-size:.9rem; }
-    .chart-wrap { max-width: 860px; }
-  </style>
-</head>
-<body>
-<h1>Portfolio Dashboard</h1>
-
+<!-- filters -->
 <form class="bar" method="get" action="/dashboard">
     <label>Account</label>
     <input type="text" name="account" th:value="${account}">
@@ -32,51 +8,87 @@
         <option value="usd" th:selected="${vs=='usd'}">USD</option>
         <option value="eur" th:selected="${vs=='eur'}">EUR</option>
     </select>
-    <button type="submit">View</button>
+    <label>Min value</label>
+    <input type="number" step="0.01" name="minValue" th:value="${minValue}">
+    <label>Min %</label>
+    <input type="number" step="0.001" name="minPct" th:placeholder="0.005" th:value="${minPct}">
+    <label>Pie top</label>
+    <input type="number" name="top" min="1" th:value="${top}">
+    <input type="hidden" name="platform" th:value="${platform}">
+    <button type="submit">Apply</button>
+    <a th:href="@{'/dashboard'(account=${account},vs=${vs})}" style="margin-left:8px;">Reset</a>
 </form>
 
+<!-- refresh -->
 <form class="bar" method="post" action="/dashboard/refresh">
     <input type="hidden" name="account" th:value="${account}">
     <input type="hidden" name="vs" th:value="${vs}">
     <button type="submit">Refresh balances (Binance + Kraken)</button>
-    <span class="muted">Requires API keys set in env.</span>
 </form>
 
-<!-- Platform subtotals -->
+<!-- subtotals; each card links to drilldown -->
 <div class="cards">
-    <div class="card" th:each="p : ${platformTotals}">
+    <a class="card" th:each="p : ${platformTotals}"
+       th:href="@{'/dashboard'(account=${account},vs=${vs},platform=${p.exchange()},minValue=${minValue},minPct=${minPct},top=${top})}"
+       style="text-decoration:none;color:inherit;">
         <h3 th:text="${#strings.capitalize(p.exchange())}">Binance</h3>
         <div class="money">
-            <span th:text="${#numbers.formatDecimal(p.value(), 1, 2)}">0.00</span>
+            <span th:text="${#numbers.formatDecimal(p.value(),1,2)}">0.00</span>
             <span th:text="${vs.toUpperCase()}">GBP</span>
         </div>
-    </div>
+        <div class="muted">Click to drill down</div>
+    </a>
+
     <div class="card">
         <h3>Total</h3>
         <div class="money">
-            <span th:text="${#numbers.formatDecimal(total, 1, 2)}">0.00</span>
+            <span th:text="${#numbers.formatDecimal(total,1,2)}">0.00</span>
             <span th:text="${vs.toUpperCase()}">GBP</span>
         </div>
-        <div class="muted" th:if="${unresolved != null and !unresolved.isEmpty()}">
+        <div class="muted" th:if="${platform}">
+            Filtering platform: <strong th:text="${platform}">binance</strong>
+            &nbsp;(<a th:href="@{'/dashboard'(account=${account},vs=${vs},minValue=${minValue},minPct=${minPct},top=${top})}">clear</a>)
+        </div>
+        <div class="muted" th:if="${unresolved != null && !unresolved.isEmpty()}">
             Unresolved: <span th:text="${unresolved}">[]</span>
         </div>
     </div>
 </div>
 
-<!-- Pie chart -->
+<!-- pie -->
 <div class="chart-wrap" th:if="${pie != null and !pie.isEmpty()}">
     <canvas id="pie"></canvas>
 </div>
-<div class="muted" th:if="${pie == null or pie.isEmpty()}">
-    No valued assets yet (refresh balances or add mappings).
-</div>
+<div class="muted" th:if="${pie == null or pie.isEmpty()}">No valued assets yet.</div>
 
+<!-- tokens table (desc by value) -->
+<table th:if="${tokens != null and !tokens.isEmpty()}">
+    <thead>
+    <tr>
+        <th style="width:120px;">Platform</th>
+        <th>Token</th>
+        <th class="right">Qty</th>
+        <th class="right">Price (<span th:text="${vs.toUpperCase()}">GBP</span>)</th>
+        <th class="right">Value (<span th:text="${vs.toUpperCase()}">GBP</span>)</th>
+    </tr>
+    </thead>
+    <tbody>
+    <tr th:each="t : ${tokens}">
+        <td th:text="${t.exchange()}">binance</td>
+        <td th:text="${t.asset()}">BTC</td>
+        <td class="right" th:text="${#numbers.formatDecimal(t.qty(),1,8)}">0.00000000</td>
+        <td class="right" th:text="${#numbers.formatDecimal(t.price(),1,6)}">0.00</td>
+        <td class="right" th:text="${#numbers.formatDecimal(t.value(),1,2)}">0.00</td>
+    </tr>
+    </tbody>
+</table>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0"></script>
 <script th:inline="javascript">
 /*<![CDATA[*/
   const labels   = /*[[${pieLabels}]]*/ [];
   const dataVals = /*[[${pieValues}]]*/ [];
   const currency = /*[[${vs}]]*/ 'gbp';
-
   if (labels.length) {
     const ctx = document.getElementById('pie').getContext('2d');
     new Chart(ctx, {
@@ -85,19 +97,13 @@
       options: {
         plugins: {
           legend: { position: 'right' },
-          tooltip: {
-            callbacks: {
-              label: (item) => {
-                const v = item.parsed || 0;
-                return `${item.label}: ${v.toLocaleString(undefined,{maximumFractionDigits:2})} ${currency.toUpperCase()}`;
-              }
-            }
-          }
+          tooltip: { callbacks: { label: (i) => {
+            const v = i.parsed || 0;
+            return `${i.label}: ${v.toLocaleString(undefined,{maximumFractionDigits:2})} ${currency.toUpperCase()}`;
+          }}}
         }
       }
     });
   }
 /*]]>*/
 </script>
-</body>
-</html>
