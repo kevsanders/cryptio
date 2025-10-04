@@ -69,5 +69,14 @@
     </tr>
     </tfoot>
 </table>
+
+<a th:href="@{'/value'(account=${account}, vs='gbp')}">View valuation (GBP)</a>
+<a th:href="@{'/dashboard'(account=${account}, vs='gbp')}">Go to Dashboard</a>
+
+<a th:href="@{'/dashboard'(account=${account}, vs='gbp')}"
+   style="display:inline-block;padding:.45rem .7rem;border:1px solid #ccc;border-radius:8px;background:#f7f7f7;text-decoration:none;color:#222;">
+    View Dashboard (GBP)
+</a>
+
 </body>
 </html>

@@ -1,0 +1,103 @@
+<!-- src/main/resources/templates/dashboard.html -->
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="utf-8"/>
+    <title>Portfolio Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0"></script>
+    <style>
+    :root { --gap: 14px; }
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 24px; color:#222; }
+    .bar { display:flex; gap:var(--gap); align-items:center; margin-bottom:var(--gap); flex-wrap: wrap; }
+    input, select, button { padding:.45rem .7rem; border:1px solid #d0d0d0; border-radius:8px; background:#fafafa; }
+    button { cursor:pointer; }
+    button:hover { background:#f0f0f0; }
+    .cards { display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:var(--gap); margin: 18px 0; }
+    .card { border:1px solid #ececec; border-radius:12px; padding:16px; background:#fff; box-shadow:0 1px 4px rgba(0,0,0,.04);}
+    .card h3 { margin:0 0 6px 0; font-size:1rem; font-weight:600; }
+    .money { font-weight:700; font-size:1.25rem; }
+    .muted { color:#777; font-size:.9rem; }
+    .chart-wrap { max-width: 860px; }
+  </style>
+</head>
+<body>
+<h1>Portfolio Dashboard</h1>
+
+<form class="bar" method="get" action="/dashboard">
+    <label>Account</label>
+    <input type="text" name="account" th:value="${account}">
+    <label>Currency</label>
+    <select name="vs" th:value="${vs}">
+        <option value="gbp" th:selected="${vs=='gbp'}">GBP</option>
+        <option value="usd" th:selected="${vs=='usd'}">USD</option>
+        <option value="eur" th:selected="${vs=='eur'}">EUR</option>
+    </select>
+    <button type="submit">View</button>
+</form>
+
+<form class="bar" method="post" action="/dashboard/refresh">
+    <input type="hidden" name="account" th:value="${account}">
+    <input type="hidden" name="vs" th:value="${vs}">
+    <button type="submit">Refresh balances (Binance + Kraken)</button>
+    <span class="muted">Requires API keys set in env.</span>
+</form>
+
+<!-- Platform subtotals -->
+<div class="cards">
+    <div class="card" th:each="p : ${platformTotals}">
+        <h3 th:text="${#strings.capitalize(p.exchange())}">Binance</h3>
+        <div class="money">
+            <span th:text="${#numbers.formatDecimal(p.value(), 1, 2)}">0.00</span>
+            <span th:text="${vs.toUpperCase()}">GBP</span>
+        </div>
+    </div>
+    <div class="card">
+        <h3>Total</h3>
+        <div class="money">
+            <span th:text="${#numbers.formatDecimal(total, 1, 2)}">0.00</span>
+            <span th:text="${vs.toUpperCase()}">GBP</span>
+        </div>
+        <div class="muted" th:if="${unresolved != null and !unresolved.isEmpty()}">
+            Unresolved: <span th:text="${unresolved}">[]</span>
+        </div>
+    </div>
+</div>
+
+<!-- Pie chart -->
+<div class="chart-wrap" th:if="${pie != null and !pie.isEmpty()}">
+    <canvas id="pie"></canvas>
+</div>
+<div class="muted" th:if="${pie == null or pie.isEmpty()}">
+    No valued assets yet (refresh balances or add mappings).
+</div>
+
+<script th:inline="javascript">
+/*<![CDATA[*/
+  const labels   = /*[[${pieLabels}]]*/ [];
+  const dataVals = /*[[${pieValues}]]*/ [];
+  const currency = /*[[${vs}]]*/ 'gbp';
+
+  if (labels.length) {
+    const ctx = document.getElementById('pie').getContext('2d');
+    new Chart(ctx, {
+      type: 'pie',
+      data: { labels, datasets: [{ data: dataVals }] },
+      options: {
+        plugins: {
+          legend: { position: 'right' },
+          tooltip: {
+            callbacks: {
+              label: (item) => {
+                const v = item.parsed || 0;
+                return `${item.label}: ${v.toLocaleString(undefined,{maximumFractionDigits:2})} ${currency.toUpperCase()}`;
+              }
+            }
+          }
+        }
+      }
+    });
+  }
+/*]]>*/
+</script>
+</body>
+</html>
