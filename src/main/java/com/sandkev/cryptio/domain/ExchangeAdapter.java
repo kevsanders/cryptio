@@ -7,6 +7,6 @@ import java.util.Map;
 
 public interface ExchangeAdapter {
     String name();
-    List<Transaction> fetchRecentTrades(Instant since);
+    List<Tx> fetchRecentTrades(Instant since);
     Map<String, BigDecimal> fetchBalances();
 }

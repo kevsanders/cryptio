@@ -81,6 +81,19 @@
     <span class="muted">Requires API keys set in env.</span>
 </form>
 
+<div class="bar">
+    <form method="post" action="/ingest/binance">
+        <input type="hidden" name="account" th:value="${account}">
+        <button type="submit">Fetch from Binance</button>
+    </form>
+    <form method="post" action="/ingest/kraken">
+        <input type="hidden" name="account" th:value="${account}">
+        <button type="submit">Fetch from Kraken</button>
+    </form>
+    <span class="muted">Requires API keys configured via env.</span>
+</div>
+
+
 <!-- Subtotals; each card links to drilldown -->
 <div class="cards">
     <a class="card" th:each="p : ${platformTotals}"
@@ -146,6 +159,56 @@
         <div class="muted" th:if="${pie == null or pie.isEmpty()}">No valued assets yet.</div>
     </div>
 </div>
+
+<!-- Ingest: Trades / Deposits / Withdrawals / Dust / Convert / Rewards / All -->
+<div class="bar" style="gap:10px; flex-wrap: wrap;">
+    <!-- Trades -->
+    <form method="post" action="/binance/ingest-trades">
+        <input type="hidden" name="account" th:value="${account}">
+        <button type="submit">Ingest Trades</button>
+    </form>
+
+    <!-- Deposits -->
+    <form method="post" action="/binance/ingest-deposits">
+        <input type="hidden" name="account" th:value="${account}">
+        <button type="submit">Ingest Deposits</button>
+    </form>
+
+    <!-- Withdrawals -->
+    <form method="post" action="/binance/ingest-withdrawals">
+        <input type="hidden" name="account" th:value="${account}">
+        <button type="submit">Ingest Withdrawals</button>
+    </form>
+
+    <!-- Dust -->
+    <form method="post" action="/binance/ingest-dust">
+        <input type="hidden" name="account" th:value="${account}">
+        <button type="submit">Ingest Dust</button>
+    </form>
+
+    <!-- Convert -->
+    <form method="post" action="/binance/ingest-convert">
+        <input type="hidden" name="account" th:value="${account}">
+        <button type="submit">Ingest Convert</button>
+    </form>
+
+    <!-- Rewards -->
+    <form method="post" action="/binance/ingest-rewards">
+        <input type="hidden" name="account" th:value="${account}">
+        <button type="submit">Ingest Rewards</button>
+    </form>
+
+    <!-- All since last checkpoint -->
+    <form method="post" action="/dashboard/ingest-all">
+        <input type="hidden" name="account" th:value="${account}">
+        <input type="hidden" name="vs" th:value="${vs}">
+        <button type="submit" style="font-weight:600;">Ingest All (since checkpoint)</button>
+    </form>
+</div>
+
+<a class="btn" th:href="@{'/reconcile'(account=${account}, platform='binance')}">Reconcile</a>
+<p><a href="/tx">View All Transactions</a></p>
+
 
 <!-- Chart -->
 <script th:inline="javascript">

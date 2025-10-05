@@ -30,3 +30,30 @@ Balances are ingested via exchange APIs, normalized into a relational schema (ma
 git clone https://github.com/yourname/cryptio.git
 cd cryptio
 ./gradlew build
+
+
+## reconcile
+3) How to use (sequence)
+
+Backfill (choose your since date):
+
+POST /binance/ingest-trades?account=primary&since=2024-01-01T00:00:00Z
+POST /binance/ingest-deposits?account=primary&since=2024-01-01T00:00:00Z
+POST /binance/ingest-withdrawals?account=primary&since=2024-01-01T00:00:00Z
+POST /binance/ingest-dust?account=primary&since=2024-01-01T00:00:00Z
+POST /binance/ingest-convert?account=primary&since=2024-01-01T00:00:00Z
+POST /binance/ingest-rewards?account=primary&since=2024-01-01T00:00:00Z
+
+
+Reconcile:
+
+GET /binance/reconcile?account=primary
+
+
+You should see deltas shrink substantially. Remaining small differences typically come from:
+
+Funding fee transfers (for margin/futures — if you only use spot, ignore),
+
+Launchpool/Locked Earn nuances (more reward types; they also land in assetDividend),
+
+Timing differences if snapshots were taken mid-flow.

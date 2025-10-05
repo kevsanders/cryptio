@@ -25,6 +25,7 @@ public class PortfolioController {
     @GetMapping("/pnl") List<PnlService.PnlLine> pnl(@RequestParam Map<String, BigDecimal> price){
         return pnl.compute(price); // pass prices from your price service in prod
     }
-    @PostMapping("/tx") Transaction add(@RequestBody Transaction t){ return tx.save(t); }
+    @PostMapping("/tx")
+    Tx add(@RequestBody Tx t){ return tx.save(t); }
 }
 
