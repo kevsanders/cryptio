@@ -3,13 +3,14 @@ package com.sandkev.cryptio.trades;
 //package com.sandkev.cryptio.binance;
 
 import com.sandkev.cryptio.config.BinanceSpotProperties;
+import com.sandkev.cryptio.portfolio.AssetUniverseDao;
 import com.sandkev.cryptio.tx.TxWriter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
-import org.springframework.http.MediaType;
 
+import javax.annotation.Nullable;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import java.math.BigDecimal;
@@ -30,43 +31,56 @@ public class BinanceTradeIngestService {
     private final BinanceSpotProperties props; // has apiKey/secret/timeout
     private final JdbcTemplate jdbc;
     private final TxWriter writer;
+    private final AssetUniverseDao assetsDao;
+    private final BinanceSymbolMapper symbolMapper;
 
-    public BinanceTradeIngestService(WebClient binanceWebClient, BinanceSpotProperties props, JdbcTemplate jdbc, TxWriter writer) {
+    public BinanceTradeIngestService(WebClient binanceWebClient, BinanceSpotProperties props,
+                                     JdbcTemplate jdbc, TxWriter writer, AssetUniverseDao assetsDao,
+                                     BinanceSymbolMapper symbolMapper) {
         this.http = binanceWebClient;
         this.props = props;
         this.jdbc = jdbc;
         this.writer = writer;
+        this.assetsDao = assetsDao;
+        this.symbolMapper = symbolMapper;
     }
 
-    public int ingestMyTrades(String accountRef, Instant sinceInclusive) {
-        // Decide symbols to fetch: take union of symbols seen in latest balances + common majors
-        var symbols = new LinkedHashSet<String>(jdbc.query(
-                "select distinct asset from v_latest_balance where exchange='binance' and account=?",
-                (rs, i) -> rs.getString(1),
-                accountRef
-        ));
-        if (symbols.isEmpty()) {
-            // fetch a default basket if we have no balances yet
-            symbols.addAll(List.of("BTC","ETH","USDT","USDC","BNB","ADA","SOL","XRP","DOT","LTC","LINK","AVAX","SUI"));
+    /** New: ingest trades for ALL discovered assets for this account/exchange using dynamic symbol list. */
+    public int ingestAllAssets(String accountRef, @Nullable Instant sinceInclusive) {
+        String exchange = "binance";
+        Set<String> assets = assetsDao.assetsForAccount(exchange, accountRef);
+
+        int total = 0;
+        List<String> symbols = new ArrayList<>();
+        for (String a : assets) {
+            String mkt = symbolMapper.toMarket(a);
+            if (mkt == null) continue;
+            symbols.add(mkt);
         }
 
-        int inserted = 0;
-        for (String base : symbols) {
-            // try common quotes by priority
-            for (String quote : List.of("USDT","BUSD","USDC","BTC","BNB","ETH","GBP","EUR")) {
-                String symbol = base + quote; // e.g. BTCUSDT
-                try {
-                    inserted += fetchAndUpsertTrades(accountRef, symbol, sinceInclusive);
-                    break; // if one quote market exists and returns trades, stop trying others
-                } catch (SymbolNotFound e) {
-                    // try next quote
+        if (symbols.isEmpty()) {
+            log.info("No assets discovered for account {} on {}. Nothing to ingest.", accountRef, exchange);
+            return 0;
+        }
+
+        for (String symbol : symbols) {
+            try {
+                total += fetchAndUpsertTradesForSymbol(symbol, accountRef, sinceInclusive);
+            } catch (RuntimeException ex) {
+                String msg = ex.getMessage();
+                if (msg != null && msg.contains("\"code\":-1121")) {
+                    log.warn("Skipping invalid/unsupported symbol on Binance: {} ({})", symbol, msg);
+                    continue;
                 }
+                log.error("Trade ingest failed for symbol {}: {}", symbol, msg, ex);
+                // Optionally continue; or rethrow to fail the whole batch.
             }
         }
-        return inserted;
+        return total;
     }
 
-    private int fetchAndUpsertTrades(String accountRef, String symbol, Instant sinceInclusive) throws SymbolNotFound {
+
+    private int fetchAndUpsertTradesForSymbol(String symbol, String accountRef, Instant sinceInclusive) /*throws SymbolNotFound*/ {
         long startMs = sinceInclusive != null ? sinceInclusive.toEpochMilli() : 0L;
 
         // Optional checkpoint: if we have a cursor_ts newer than given since, use it
@@ -122,6 +136,7 @@ public class BinanceTradeIngestService {
                 String base = symbol.replaceFirst("(USDT|BUSD|USDC|BTC|BNB|ETH|GBP|EUR)$", "");
                 String quote = symbol.substring(base.length());
 
+/*
                 // Upsert into tx (H2 MERGE). Types: BUY/SELL
                 jdbc.update("""
                     merge into tx (exchange, account_ref, base, quote, type, quantity, price, fee, fee_asset, ts, external_id)
@@ -134,10 +149,10 @@ public class BinanceTradeIngestService {
                         new java.sql.Timestamp(time),
                         "trade:" + symbol + ":" + id
                 );
+*/
 
 
-//todo: use TxWriter
-/*
+                //todo: use TxWriter
                 // externalId: trade:<symbol>:<id>
                 writer.upsert("binance", accountRef, base, quote,
                         isBuyer ? "BUY" : "SELL",
@@ -148,8 +163,6 @@ public class BinanceTradeIngestService {
                         Instant.ofEpochMilli(((Number)t.get("time")).longValue()),
                         "trade:" + symbol + ":" + ((Number)t.get("id")).longValue()
                 );
-*/
-
 
                 total++;
 

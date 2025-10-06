@@ -83,7 +83,7 @@ class BinanceMyTradesE2ETest {
                 .willReturn(okJson("[]")));
 
         // Run ingest for a single symbol path in your service (call wrapper that picks BTCUSDT)
-        int inserted = svc.ingestMyTrades("primary", Instant.ofEpochMilli(1699999900000L)); // since slightly before first trade
+        int inserted = svc.ingestAllAssets("primary", Instant.ofEpochMilli(1699999900000L)); // since slightly before first trade
 
         assertThat(inserted).isGreaterThanOrEqualTo(2);
 

@@ -25,7 +25,7 @@ public class BinanceIngestController {
     public String ingestTrades(@RequestParam(defaultValue = "primary") String account,
                                @RequestParam(required = false)
                                @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant since) {
-        int n = trades.ingestMyTrades(account, since);
+        int n = trades.ingestAllAssets(account, since);
         return "Binance trades ingested: " + n;
     }
 
