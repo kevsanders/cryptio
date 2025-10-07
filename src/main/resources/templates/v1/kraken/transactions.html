@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Kraken Transactions</title>
+    <!-- If you already have your own CSS bundle, use that instead -->
+    <link rel="stylesheet" th:href="@{/css/main.css}" />
+    <style>
+/* Minimal layout helpers if you don't have a CSS framework wired */
+body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif;line-height:1.4;margin:0;padding:16px;}
+.container{max-width:1200px;margin:0 auto;}
+.muted{color:#6b7280}
+h1{font-size:1.5rem;margin:0 0 4px}
+.card{border:1px dashed #e5e7eb;border-radius:14px;padding:16px;margin:12px 0}
+.grid{display:grid;gap:12px}
+.grid-6{grid-template-columns:repeat(6, minmax(0, 1fr))}
+.grid-4{grid-template-columns:repeat(4, minmax(0, 1fr))}
+.row{display:flex;gap:8px;align-items:center;}
+.right{margin-left:auto}
+.btn{display:inline-flex;align-items:center;gap:6px;border:1px solid #e5e7eb;border-radius:10px;padding:8px 12px;background:#fff;cursor:pointer}
+.btn[disabled]{opacity:.6;cursor:not-allowed}
+.btn.primary{background:#111827;color:#fff;border-color:#111827}
+.btn.destructive{border-color:#ef4444;color:#ef4444}
+.input, select{border:1px solid #e5e7eb;border-radius:10px;padding:8px 10px;width:100%}
+table{width:100%;border-collapse:collapse;font-size:14px}
+thead tr{background:#f9fafb}
+th,td{padding:10px;border-top:1px solid #f3f4f6;text-align:left;vertical-align:middle}
+.text-right{text-align:right}
+.badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;border:1px solid #e5e7eb;background:#fff;margin-right:6px;margin-bottom:4px}
+.badge.ok{background:#ecfdf5;border-color:#10b981;color:#065f46}
+.badge.warn{background:#fffbeb;border-color:#f59e0b;color:#92400e}
+.badge.err{background:#fef2f2;border-color:#ef4444;color:#991b1b}
+.pagination{display:flex;gap:8px;justify-content:center;margin:12px 0}
+.truncate{max-width:260px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+</style>
+</head>
+<body>
+<div class="container" x-data>
+    <div class="row" style="justify-content:space-between;align-items:flex-end">
+        <div>
+            <h1>Kraken Transactions</h1>
+            <div class="muted">Ingest, filter, reconcile and tag Kraken account activity.</div>
+        </div>
+        <div class="row">
+            <form th:action="@{/kraken/transactions/sync}" method="post" class="row" th:object="${filters}">
+                <input type="hidden" th:if="${_csrf != null}" th:name="${_csrf.parameterName}" th:value="${_csrf.token}" />
+                <input class="input" type="date" th:field="*{from}" placeholder="From" />
+                <button class="btn primary" type="submit">Sync from Kraken</button>
+            </form>
+            <form th:action="@{/kraken/transactions/import}" method="post" enctype="multipart/form-data" class="row">
+                <input type="hidden" th:if="${_csrf != null}" th:name="${_csrf.parameterName}" th:value="${_csrf.token}" />
+                <input class="input" type="file" name="file" accept=".csv" required />
+                <button class="btn" type="submit">Import CSV</button>
+            </form>
+            <button class="btn" type="button" onclick="exportCsv()">Export CSV</button>
+        </div>
+    </div>
+
+
+
+    <!-- Filters -->
+    <form class="card" th:action="@{/kraken/transactions}" method="get" th:object="${filters}">
+        <div class="grid grid-6">
+            <div class="grid-col-span-2">
+                <label class="muted">Search</label>
+                <input class="input" th:field="*{q}" placeholder="txid, notes, base, quote…" />
+            </div>
+            <div>
+                <label class="muted">Pair</label>
+                <input class="input" th:field="*{pair}" placeholder="e.g. ETH/EUR" />
+            </div>
+            <div>
+                <label class="muted">Type</label>
+                <select th:field="*{type}">
+                    <option value="">Any</option>
+                    <option value="buy">Buy</option>
+                    <option value="sell">Sell</option>
+                    <option value="deposit">Deposit</option>
+                    <option value="withdrawal">Withdrawal</option>
+                    <option value="staking">Staking</option>
+                    <option value="fee">Fee</option>
+                </select>
+            </div>
+            <div>
+                <label class="muted">Status</label>
+                <select th:field="*{status}">
+                    <option value="">Any</option>
+                    <option value="new">New</option>
+                    <option value="pending">Pending</option>
+                    <option value="reconciled">Reconciled</option>
+                    <option value="error">Error</option>
+                </select>
+            </div>
+            <div class="grid" style="grid-template-columns:1fr 1fr;gap:8px">
+                <div>
+                    <label class="muted">From</label>
+                    <input class="input" type="date" th:field="*{from}" />
+                </div>
+                <div>
+                    <label class="muted">To</label>
+                    <input class="input" type="date" th:field="*{to}" />
+                </div>
+            </div>
+        </div>
+        <div class="row" style="justify-content:flex-end;margin-top:8px">
+            <label class="muted">Sort</label>
+            <select name="sort" th:value="${filters.sort}" class="input" style="width:auto;margin-left:8px">
+                <option value="-ts">Newest first</option>
+                <option value="ts">Oldest first</option>
+                <option value="pair">Pair A→Z</option>
+                <option value="-pair">Pair Z→A</option>
+                <option value="-amount">Amount desc</option>
+                <option value="amount">Amount asc</option>
+            </select>
+            <button class="btn primary" type="submit" style="margin-left:8px">Apply</button>
+        </div>
+    </form>
+
+
+    <!-- Metrics -->
+    <div class="grid grid-4">
+        <div class="card"><div class="muted">Total</div><div th:text="${metrics.total}"></div></div>
+        <div class="card"><div class="muted">Buys</div><div th:text="${metrics.buys}"></div></div>
+        <div class="card"><div class="muted">Sells</div><div th:text="${metrics.sells}"></div></div>
+        <div class="card"><div class="muted">Reconciled</div><div th:text="${metrics.reconciled}"></div></div>
+    </div>
+
+    <!-- Bulk actions -->
+    <form th:action="@{/kraken/transactions/bulk}" method="post" id="bulkForm" class="row">
+        <input type="hidden" th:if="${_csrf != null}" th:name="${_csrf.parameterName}" th:value="${_csrf.token}" />
+        <input type="hidden" name="action" value="" />
+        <input type="hidden" name="tag" value="" />
+        <button class="btn" type="button" onclick="bulkSet('tag')">Tag</button>
+        <button class="btn" type="button" onclick="bulkSet('reconcile')">Reconcile</button>
+        <button class="btn destructive" type="button" onclick="bulkSet('delete')">Delete</button>
+        <div class="muted" id="selCount" style="margin-left:6px">0 selected</div>
+        <div class="right muted">Page size: <span th:text="${page.size}"></span> • Page <span th:text="${page.number + 1}"></span> of <span th:text="${page.totalPages}"></span></div>
+    </form>
+
+    <!-- Table -->
+    <div class="card" style="padding:0">
+        <table>
+            <thead>
+            <tr>
+                <th style="width:36px"><input type="checkbox" id="selectAll" onclick="toggleAll(this)" /></th>
+                <th>Date</th>
+                <th>Pair</th>
+                <th>Type</th>
+                <th class="text-right">Price</th>
+                <th class="text-right">Amount</th>
+                <th class="text-right">Total</th>
+                <th class="text-right">Fee</th>
+                <th>Status</th>
+                <th>Tags</th>
+                <th>TxID</th>
+            </tr>
+            </thead>
+            <tbody>
+            <tr th:each="t : ${items}">
+                <td><input type="checkbox" name="ids" th:value="${t.id}" class="rowCheck" onchange="updateSel()"/></td>
+                <td th:text="${t.ts != null ? #temporals.format(t.ts, 'yyyy-MM-dd HH:mm') : ''}"></td>
+                <td><span th:text="${t.pair}" class=""></span></td>
+                <td>
+                    <span class="badge"
+                          th:classappend="${t.type == 'buy'} ? ' ok' : (t.type == 'sell' ? ' err' : '')"
+                          th:text="${t.type}"></span>
+                </td>
+                <td class="text-right" th:text="${t.price}"></td>
+                <td class="text-right" th:text="${t.amount}"></td>
+                <td class="text-right" th:text="${t.total}"></td>
+                <td class="text-right" th:text="${t.fee}"></td>
+                <td>
+                    <span class="badge"
+                          th:classappend="${t.status == 'reconciled'} ? ' ok' : (t.status == 'error' ? ' err' : (t.status == 'pending' ? ' warn' : ''))"
+                          th:text="${t.status}"></span>
+                </td>
+                <td>
+                    <span th:each="tag : ${t.tags}" class="badge" th:text="${tag}"></span>
+                </td>
+                <td class="truncate" th:title="${t.txid}" th:text="${t.txid}"></td>
+            </tr>
+            <tr th:if="${#lists.isEmpty(items)}">
+                <td colspan="11" class="muted" style="text-align:center;padding:24px">No transactions match your filters.</td>
+            </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Pagination -->
+    <div class="pagination">
+        <a class="btn" th:href="@{/kraken/transactions(page=${page.number-1},size=${page.size},sort=${filters.sort},pair=${filters.pair},type=${filters.type},status=${filters.status},q=${filters.q},from=${filters.from},to=${filters.to})}" th:if="${page.number > 0}">Prev</a>
+        <span class="muted">Page [[${page.number+1}]] / [[${page.totalPages}]]</span>
+        <a class="btn" th:href="@{/kraken/transactions(page=${page.number+1},size=${page.size},sort=${filters.sort},pair=${filters.pair},type=${filters.type},status=${filters.status},q=${filters.q},from=${filters.from},to=${filters.to})}" th:if="${page.number+1 < page.totalPages}">Next</a>
+    </div>
+</div>
+
+<script>
+function toggleAll(cb){
+const rows = document.querySelectorAll('.rowCheck');
+rows.forEach(r => r.checked = cb.checked);
+updateSel();
+}
+function updateSel(){
+const rows = document.querySelectorAll('.rowCheck:checked');
+document.getElementById('selCount').textContent = `${rows.length} selected`;
+}
+function bulkSet(action){
+const form = document.getElementById('bulkForm');
+const ids = document.querySelectorAll('.rowCheck:checked');
+if(ids.length===0){ alert('Select at least one row'); return; }
+form.action = action === 'tag' ? form.action + '?action=tag' : form.action + `?action=${action}`;
+if(action==='tag'){
+const t = prompt('Add tag:');
+if(!t) return;
+form.querySelector('input[name="tag"]').value = t;
+}
+form.submit();
+}
+function exportCsv(){
+// Simple client-side export of current page table rows
+const rows = Array.from(document.querySelectorAll('tbody tr'));
+const data = [];
+const header = ['id','ts','pair','type','price','amount','total','fee','status','tags','txid'];
+data.push(header.join(','));
+rows.forEach(tr => {
+const cb = tr.querySelector('input.rowCheck');
+if(!cb) return; // skip empty state row
+const tds = tr.querySelectorAll('td');
+const id = cb.value;
+const ts = tds[1]?.innerText || '';
+const pair = tds[2]?.innerText || '';
+const type = tds[3]?.innerText || '';
+const price = tds[4]?.innerText || '';
+const amount = tds[5]?.innerText || '';
+const total = tds[6]?.innerText || '';
+const fee = tds[7]?.innerText || '';
+const status = tds[8]?.innerText || '';
+const tags = tds[9]?.innerText || '';
+const txid = tds[10]?.innerText || '';
+data.push([id,ts,pair,type,price,amount,total,fee,status,tags,txid].map(s => '"'+String(s).replaceAll('"','""')+'"').join(','));
+});
+const blob = new Blob([data.join('\n')], {type: 'text/csv;charset=utf-8;'});
+const url = URL.createObjectURL(blob);
+const a = document.createElement('a');
+a.href = url; a.download = `kraken-transactions-${Date.now()}.csv`;
+document.body.appendChild(a); a.click(); a.remove();
+URL.revokeObjectURL(url);
+}
+</script>
+</body>
+</html>

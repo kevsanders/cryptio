@@ -6,6 +6,7 @@ import org.junit.jupiter.api.*;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
 
@@ -32,6 +33,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  *  - If you truly have zero balances, the map can be empty; the call must still succeed.
  */
 @Tag("live")
+@ActiveProfiles("test")
 @SpringBootTest(
         classes = {
                 BinanceSpotConfig.class,

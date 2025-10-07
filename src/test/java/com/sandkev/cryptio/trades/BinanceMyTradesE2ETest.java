@@ -18,10 +18,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 //@ActiveProfiles("h2")
 //@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
+@ActiveProfiles("test")
 @SpringBootTest(
         webEnvironment = SpringBootTest.WebEnvironment.MOCK
 )
-@ActiveProfiles("h2")
+//@ActiveProfiles("h2")
 @Disabled
 class BinanceMyTradesE2ETest {
 

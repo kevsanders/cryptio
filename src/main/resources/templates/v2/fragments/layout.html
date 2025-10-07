@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="en">
+<head th:fragment="head(title)">
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <title th:text="${title}">cryptio</title>
+    <link rel="stylesheet" th:href="@{/css/app.css}"/>
+</head>
+
+<body>
+<header th:fragment="header(current)">
+    <div class="topbar">
+        <a class="brand" th:href="@{/}">cryptio</a>
+        <nav class="nav">
+            <a th:classappend="${current=='dashboard'} ? 'active'" th:href="@{/dashboard}">Dashboard</a>
+            <a th:classappend="${current=='balances'}  ? 'active'" th:href="@{/balances}">Balances</a>
+            <a th:classappend="${current=='tx'}        ? 'active'" th:href="@{/tx}">Transactions</a>
+            <a th:classappend="${current=='reconcile'} ? 'active'" th:href="@{/reconcile}">Reconcile</a>
+        </nav>
+    </div>
+</header>
+
+<footer th:fragment="footer">
+    <div class="footer">© cryptio</div>
+</footer>
+</body>
+</html>

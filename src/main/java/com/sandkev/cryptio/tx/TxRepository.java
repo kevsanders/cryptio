@@ -13,19 +13,37 @@ import java.util.List;
 
 public interface TxRepository extends JpaRepository<Tx, Long> {
 
+    // --- Existing 3-arg method (kept for backward compatibility) ---
     @Query("""
         select t from Tx t
-         where (:asset is null or UPPER(t.asset) = UPPER(:asset))
-           and (:exchange is null or UPPER(t.exchange) = UPPER(:exchange))
-           and (:account is null or t.accountRef = :account)
+         where (:asset    is null or upper(t.asset) = upper(:asset))
+           and (:exchange is null or lower(t.exchange) = lower(:exchange))
+           and (:account  is null or t.accountRef = :account)
          order by t.ts desc
     """)
-    List<Tx> findFiltered(@Param("asset") String asset,
-                          @Param("exchange") String exchange,
-                          @Param("account") String account);
+    List<Tx> findFiltered(
+            @Param("asset") String asset,
+            @Param("exchange") String exchange,
+            @Param("account") String account
+    );
 
-
-//    @Query("select t from Tx t where t.timestamp between :start and :end")
-//    List<Tx> findByTsBetween(@Param("start") Instant start,
-//                             @Param("end") Instant end);
+    // --- New 6-arg overload for UI filtering ---
+    @Query("""
+        select t from Tx t
+         where (:asset    is null or upper(t.asset) = upper(:asset))
+           and (:exchange is null or lower(t.exchange) = lower(:exchange))
+           and (:account  is null or t.accountRef = :account)
+           and (:type     is null or upper(t.type) = upper(:type))
+           and (:fromTs   is null or t.ts >= :fromTs)
+           and (:toTs     is null or t.ts <  :toTs)
+         order by t.ts desc
+    """)
+    List<Tx> findFiltered(
+            @Param("asset") String asset,
+            @Param("exchange") String exchange,
+            @Param("account") String account,
+            @Param("type") String type,
+            @Param("fromTs") Instant fromTs,
+            @Param("toTs") Instant toTs
+    );
 }

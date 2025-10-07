@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="en">
+<head th:replace="v2/fragments/layout :: head('Balances')"></head>
+<body>
+<header th:replace="v2/fragments/layout :: header('balances')"></header>
+<main class="container">
+
+    <form class="bar" method="get" action="/balances">
+        <label>Exchange</label>
+        <select name="exchange" th:value="${exchange}">
+            <option value="">All</option>
+            <option value="binance" th:selected="${exchange=='binance'}">Binance</option>
+            <option value="kraken" th:selected="${exchange=='kraken'}">Kraken</option>
+        </select>
+        <label>Account</label><input name="account" th:value="${account}" placeholder="primary"/>
+        <button type="submit">Apply</button>
+        <a class="btn" th:href="@{/balances}">Clear</a>
+    </form>
+
+    <section class="card">
+        <h2>Latest Balances</h2>
+        <div class="content">
+            <table>
+                <thead>
+                <tr>
+                    <th>Exchange</th><th>Account</th><th>Asset</th>
+                    <th class="right">Free</th><th class="right">Locked</th><th class="right">Total</th>
+                    <th>As Of</th>
+                </tr>
+                </thead>
+                <tbody>
+                <tr th:each="b : ${rows}">
+                    <td th:text="${b.exchange}"></td>
+                    <td th:text="${b.account}"></td>
+                    <td th:text="${b.asset}"></td>
+                    <td class="right" th:text="${#numbers.formatDecimal(b.free,1,8)}"></td>
+                    <td class="right" th:text="${#numbers.formatDecimal(b.locked,1,8)}"></td>
+                    <td class="right" th:text="${#numbers.formatDecimal(b.total,1,8)}"></td>
+                    <td th:text="${#temporals.format(b.asOf,'yyyy-MM-dd HH:mm')}"></td>
+                </tr>
+                <tr th:if="${#lists.isEmpty(rows)}"><td colspan="7" class="muted">No balances.</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </section>
+</main>
+<footer th:replace="v2/fragments/layout :: footer"></footer>
+</body>
+</html>

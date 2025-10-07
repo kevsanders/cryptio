@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.web.reactive.function.client.WebClientRequestException;
 
@@ -29,6 +30,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  *   ./gradlew test -Dgroups=live   (if you wire that), or just run normally from IDE.
  */
 @Tag("live")
+@ActiveProfiles("test")
 @SpringBootTest(
         classes = {
                 CoinGeckoConfig.class,

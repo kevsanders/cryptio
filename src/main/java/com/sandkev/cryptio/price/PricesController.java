@@ -11,7 +11,7 @@ import java.util.Map;
 import java.util.Set;
 
 @RestController
-@RequestMapping("/prices")
+@RequestMapping("/v1/prices")
 class PricesController {
 
     private final PriceService prices;

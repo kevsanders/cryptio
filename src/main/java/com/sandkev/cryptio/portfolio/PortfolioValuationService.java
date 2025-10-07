@@ -1,269 +1,234 @@
 package com.sandkev.cryptio.portfolio;
 
-// src/main/java/com/sandkev/cryptio/portfolio/PortfolioValuationService.java
-
-import com.sandkev.cryptio.price.CoinGeckoIdResolver;
-import com.sandkev.cryptio.price.PriceService;
+import com.sandkev.cryptio.price.CoinGeckoPriceService;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.math.MathContext;
-import java.math.RoundingMode;
-import java.sql.ResultSet;
 import java.util.*;
 import java.util.stream.Collectors;
-import org.springframework.lang.Nullable;
 
 @Service
 public class PortfolioValuationService {
 
-    private static final MathContext MC = new MathContext(34, java.math.RoundingMode.HALF_UP);
-
     private final JdbcTemplate jdbc;
-    private final PriceService prices;
-    private final CoinGeckoIdResolver resolver;
+    private final CoinGeckoPriceService prices;
 
-    public PortfolioValuationService(JdbcTemplate jdbc, PriceService prices, CoinGeckoIdResolver resolver) {
+    public PortfolioValuationService(JdbcTemplate jdbc, CoinGeckoPriceService prices) {
         this.jdbc = jdbc;
         this.prices = prices;
-        this.resolver = resolver;
     }
 
-    /** Returns latest balances aggregated by asset across all exchanges for the given account. */
-    public List<Holding> latestHoldings(String account) {
-        // Aggregate by asset across exchanges (sum total_amt)
-        var rows = jdbc.query("""
-                select asset, sum(total_amt) as qty
-                from v_latest_balance
-                where account = ?
-                group by asset
-                order by asset
-                """,
-                (ResultSet rs, int i) -> new Holding(
-                        rs.getString("asset"),
-                        rs.getBigDecimal("qty")
-                ),
-                account
-        );
-        return rows;
-    }
+    /** Row projected from v_latest_balance */
+    public record BalanceRow(String platform, String asset, BigDecimal qty) {}
 
-    public ValuationResult value(String account, String vsCurrency) {
-        vsCurrency = vsCurrency.toLowerCase(Locale.ROOT);
-        var holdings = latestHoldings(account);
+    /** Dashboard DTOs */
+    public record PlatformTotal(String platform, BigDecimal value) {}
+    public record TokenSlice(String asset, BigDecimal value) {}
+    public record PieData(List<String> labels, List<BigDecimal> values) {}
 
-        // Resolve coin ids
-        Map<String, String> symbolToId = new LinkedHashMap<>();
-        List<String> unresolved = new ArrayList<>();
-        for (var h : holdings) {
-            resolver.resolve(h.asset()).ifPresentOrElse(
-                    id -> symbolToId.put(h.asset(), id),
-                    () -> unresolved.add(h.asset())
-            );
-        }
+    private static final MathContext MC = MathContext.DECIMAL64;
 
-        // Fetch prices
-        Map<String, BigDecimal> idToPrice = symbolToId.isEmpty()
-                ? Map.of()
-                : prices.getSimplePrice(new LinkedHashSet<>(symbolToId.values()), vsCurrency);
-
-        // Compute lines
-        List<Line> lines = new ArrayList<>(holdings.size());
-        BigDecimal totalValue = BigDecimal.ZERO;
-        for (var h : holdings) {
-            String coinId = symbolToId.get(h.asset());
-            BigDecimal price = coinId != null ? idToPrice.get(coinId) : null;
-
-            BigDecimal value = (price == null) ? null : h.qty().multiply(price, MC);
-            if (value != null) totalValue = totalValue.add(value, MC);
-
-            lines.add(new Line(h.asset(), h.qty(), price, value, coinId));
-        }
-
-        return new ValuationResult(vsCurrency, lines, totalValue, unresolved);
-    }
-
-    // DTOs
-    public record Holding(String asset, BigDecimal qty) {}
-    public record Line(String asset, BigDecimal qty, BigDecimal price, BigDecimal value, String coinId) {}
-    public record ValuationResult(String vsCurrency, List<Line> lines, BigDecimal total, List<String> unresolved) {}
-
-
-    /** Value by (exchange, asset), plus per-exchange subtotals and pie by asset. */
-    public Dashboard valueDashboard(String account, String vsCurrency) {
-        vsCurrency = vsCurrency.toLowerCase(Locale.ROOT);
-
-        // latest balances per exchange + asset
-        record Row(String exchange, String asset, BigDecimal qty) {}
-        var rows = jdbc.query("""
-            select exchange, asset, sum(total_amt) as qty
+    /** Load latest balances (platform, asset, total_amt) for an account. */
+    private List<BalanceRow> loadLatestBalances(String accountRef) {
+        return jdbc.query("""
+            select exchange as platform, asset, sum(total_amt) as qty
             from v_latest_balance
             where account = ?
             group by exchange, asset
-            order by exchange, asset
-            """,
-                (ResultSet rs, int i) -> new Row(
-                        rs.getString("exchange"),
-                        rs.getString("asset"),
-                        rs.getBigDecimal("qty")
-                ),
-                account
-        );
-
-        // resolve all symbols once, fetch prices once
-        var symbols = rows.stream().map(r -> r.asset).collect(Collectors.toCollection(LinkedHashSet::new));
-        Map<String,String> symToId = new LinkedHashMap<>();
-        List<String> unresolved = new ArrayList<>();
-        for (var s : symbols) {
-            resolver.resolve(s).ifPresentOrElse(id -> symToId.put(s, id), () -> unresolved.add(s));
-        }
-        Map<String, BigDecimal> idToPrice = symToId.isEmpty()
-                ? Map.of()
-                : prices.getSimplePrice(new LinkedHashSet<>(symToId.values()), vsCurrency);
-
-        // compute values
-        Map<String, BigDecimal> platformSubtotal = new LinkedHashMap<>(); // exchange -> subtotal
-        Map<String, BigDecimal> pieByAsset = new LinkedHashMap<>();        // asset -> value across platforms
-        BigDecimal grand = BigDecimal.ZERO;
-
-        for (var r : rows) {
-            String id = symToId.get(r.asset);
-            BigDecimal price = (id == null) ? null : idToPrice.get(id);
-            if (price == null) continue; // skip unresolved for totals
-
-            BigDecimal value = r.qty.multiply(price, MC);
-            platformSubtotal.merge(r.exchange, value, (a,b) -> a.add(b, MC));
-            pieByAsset.merge(r.asset, value, (a,b) -> a.add(b, MC));
-            grand = grand.add(value, MC);
-        }
-
-        // pack for UI
-        var subtotals = platformSubtotal.entrySet().stream()
-                .map(e -> new PlatformTotal(e.getKey(), e.getValue()))
-                .sorted(Comparator.comparing(PlatformTotal::exchange))
-                .toList();
-
-        var pie = pieByAsset.entrySet().stream()
-                .sorted(Map.Entry.<String,BigDecimal>comparingByValue().reversed())
-                .map(e -> new PieSlice(e.getKey(), e.getValue()))
-                .toList();
-
-        return new Dashboard(vsCurrency, subtotals, pie, grand, unresolved);
+        """, (rs, i) -> new BalanceRow(
+                rs.getString("platform"),
+                rs.getString("asset"),
+                rs.getBigDecimal("qty")
+        ), accountRef);
     }
 
-    // DTOs for the dashboard
-    public record PlatformTotal(String exchange, BigDecimal value) {}
-    public record PieSlice(String asset, BigDecimal value) {}
-    public record Dashboard(String vsCurrency,
-                            List<PlatformTotal> platformTotals,
-                            List<PieSlice> pie,
-                            BigDecimal totalValue,
-                            List<String> unresolvedSymbols) {}
+    /** Per-platform totals (in vs fiat). */
+    public List<PlatformTotal> platformTotals(String accountRef, String vs) {
+        var rows = loadLatestBalances(accountRef);
 
-    // add near your existing DTOs
-    public record TokenValue(String exchange, String asset, BigDecimal qty, BigDecimal price, BigDecimal value) {}
-    public record Dashboard2(
-            String vsCurrency,
-            List<PlatformTotal> platformTotals,        // same as before
-            List<TokenValue> tokens,                   // filtered & sorted for selected platform (or ALL)
-            List<PieSlice> pie,                        // top N + "Other"
-            BigDecimal totalValue,
-            List<String> unresolvedSymbols) {}
+        // symbols present in balances
+        var symbols = rows.stream()
+                .map(BalanceRow::asset)
+                .filter(Objects::nonNull)
+                .map(String::toUpperCase)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
 
-    public Dashboard2 valueDashboard2(String account, String vsCurrency,
-                                      @Nullable String platformFilter,   // e.g. "binance" or null for all
-                                      @Nullable BigDecimal minValue,     // absolute (e.g. 25 GBP), nullable
-                                      @Nullable BigDecimal minPct,       // e.g. 0.005 = 0.5%, nullable
-                                      int pieTopN) {
-        vsCurrency = vsCurrency.toLowerCase(java.util.Locale.ROOT);
+        // SYMBOL -> price map (via CoinGecko IDs)
+        Map<String, BigDecimal> priceMap = priceBySymbol(symbols, vs);
 
-        // 1) pull latest balances per exchange+asset; optionally filter by platform in SQL
-        final var sql = """
-        select exchange, asset, sum(total_amt) as qty
-        from v_latest_balance
-        where account = ?
-          %s
-        group by exchange, asset
-        """.formatted(platformFilter != null ? "and exchange = ?" : "");
-        var rows = platformFilter != null
-                ? jdbc.query(sql, (rs,i) -> new Object[]{ rs.getString(1), rs.getString(2), rs.getBigDecimal(3) }, account, platformFilter)
-                : jdbc.query(sql, (rs,i) -> new Object[]{ rs.getString(1), rs.getString(2), rs.getBigDecimal(3) }, account);
-
-        // 2) resolve + fetch prices once
-        var symbols = new java.util.LinkedHashSet<String>();
-        for (var r : rows) symbols.add((String) r[1]);
-        var symToId = new java.util.LinkedHashMap<String,String>();
-        var unresolved = new java.util.ArrayList<String>();
-        for (var s : symbols)
-            resolver.resolve(s).ifPresentOrElse(id -> symToId.put(s,id), () -> unresolved.add(s));
-        var idToPrice = symToId.isEmpty() ? java.util.Map.<String,java.math.BigDecimal>of()
-                : prices.getSimplePrice(new java.util.LinkedHashSet<>(symToId.values()), vsCurrency);
-
-        // 3) compute per-platform subtotals & token values
-        var platformSubtotal = new java.util.LinkedHashMap<String, java.math.BigDecimal>();
-        var tokenValuesAll   = new java.util.ArrayList<TokenValue>();
-        java.math.BigDecimal grand = java.math.BigDecimal.ZERO;
-
+        Map<String, BigDecimal> byPlatform = new LinkedHashMap<>();
         for (var r : rows) {
-            String ex  = (String) r[0];
-            String sym = (String) r[1];
-            java.math.BigDecimal qty = (java.math.BigDecimal) r[2];
-            String id = symToId.get(sym);
-            var price = (id == null) ? null : idToPrice.get(id);
-            if (price == null) continue;
-
-            var value = qty.multiply(price, MC);
-            platformSubtotal.merge(ex, value, (a,b) -> a.add(b, MC));
-            tokenValuesAll.add(new TokenValue(ex, sym, qty, price, value));
-            grand = grand.add(value, MC);
+            var sym = r.asset() == null ? "" : r.asset().toUpperCase();
+            var px = priceMap.getOrDefault(sym, BigDecimal.ZERO);
+            var value = (r.qty() == null ? BigDecimal.ZERO : r.qty().multiply(px, MC));
+            byPlatform.merge(
+                    (r.platform() == null ? "unknown" : r.platform()),
+                    value,
+                    BigDecimal::add
+            );
         }
 
-        final BigDecimal grandFinal = grand;  // <-- make it effectively final
-        // 4) thresholds
-        java.util.function.Predicate<TokenValue> passThreshold = tv -> {
-            if (tv.value() == null) return false;
-            if (minValue != null && tv.value().compareTo(minValue) < 0) return false;
-            if (minPct != null && grandFinal.signum() > 0) {               // use grandFinal here
-                var pct = tv.value().divide(grandFinal, MC);
-                if (pct.compareTo(minPct) < 0) return false;
-            }
-            return true;
-        };
+        return byPlatform.entrySet().stream()
+                .map(e -> new PlatformTotal(e.getKey(), e.getValue()))
+                .sorted(Comparator.comparing(PlatformTotal::platform))
+                .toList();
+    }
 
-        // Drilldown tokens: if platformFilter set, only that platform
-        var tokensFiltered = tokenValuesAll.stream()
-                .filter(tv -> platformFilter == null || tv.exchange().equalsIgnoreCase(platformFilter))
-                .filter(passThreshold)
-                .sorted(java.util.Comparator.comparing(TokenValue::value, java.util.Comparator.nullsLast(java.util.Comparator.naturalOrder())).reversed())
+    /** Top N tokens by value (vs fiat). */
+    public List<TokenSlice> topTokens(String accountRef, String vs, int limit, Double minPct) {
+        var rows = loadLatestBalances(accountRef);
+
+        var symbols = rows.stream()
+                .map(BalanceRow::asset)
+                .filter(Objects::nonNull)
+                .map(String::toUpperCase)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+
+        Map<String, BigDecimal> priceMap = priceBySymbol(symbols, vs);
+
+        Map<String, BigDecimal> byAsset = new LinkedHashMap<>();
+        for (var r : rows) {
+            var sym = r.asset() == null ? "" : r.asset().toUpperCase();
+            var px = priceMap.getOrDefault(sym, BigDecimal.ZERO);
+            var value = (r.qty() == null ? BigDecimal.ZERO : r.qty().multiply(px, MC));
+            byAsset.merge(sym, value, BigDecimal::add);
+        }
+
+        BigDecimal grand = byAsset.values().stream().reduce(BigDecimal.ZERO, BigDecimal::add);
+        final BigDecimal threshold =
+                (minPct != null && minPct > 0 && grand.signum() > 0)
+                        ? grand.multiply(BigDecimal.valueOf(minPct), MC)
+                        : BigDecimal.ZERO;
+
+        return byAsset.entrySet().stream()
+                .sorted(Map.Entry.<String, BigDecimal>comparingByValue().reversed())
+                .map(e -> new TokenSlice(e.getKey(), e.getValue()))
+                .filter(s -> s.value().compareTo(threshold) >= 0)
+                .limit(Math.max(1, limit))
+                .toList();
+    }
+
+    /** Pie labels & values; group small slices into OTHER if below minPct. */
+    public PieData pieData(String accountRef, String vs, double minPct) {
+        var rows = loadLatestBalances(accountRef);
+
+        var symbols = rows.stream()
+                .map(BalanceRow::asset)
+                .filter(Objects::nonNull)
+                .map(String::toUpperCase)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+
+        Map<String, BigDecimal> priceMap = priceBySymbol(symbols, vs);
+
+        Map<String, BigDecimal> byAsset = new LinkedHashMap<>();
+        for (var r : rows) {
+            var sym = r.asset() == null ? "" : r.asset().toUpperCase();
+            var px = priceMap.getOrDefault(sym, BigDecimal.ZERO);
+            var value = (r.qty() == null ? BigDecimal.ZERO : r.qty().multiply(px, MC));
+            byAsset.merge(sym, value, BigDecimal::add);
+        }
+
+        BigDecimal grand = byAsset.values().stream().reduce(BigDecimal.ZERO, BigDecimal::add);
+        if (grand.signum() == 0) return new PieData(List.of(), List.of());
+
+        BigDecimal cutoff = grand.multiply(BigDecimal.valueOf(minPct), MC);
+
+        List<String> labels = new ArrayList<>();
+        List<BigDecimal> values = new ArrayList<>();
+        BigDecimal other = BigDecimal.ZERO;
+
+        var entries = byAsset.entrySet().stream()
+                .sorted(Map.Entry.<String, BigDecimal>comparingByValue().reversed())
                 .toList();
 
-        // 5) pie: across ALL or filtered platform? (match your sheet: overall)
-        var pieMap = new java.util.LinkedHashMap<String, java.math.BigDecimal>();
-        tokenValuesAll.forEach(tv -> pieMap.merge(tv.asset(), tv.value(), (a,b) -> a.add(b, MC)));
-        var pieSorted = pieMap.entrySet().stream()
-                .sorted(java.util.Map.Entry.<String,java.math.BigDecimal>comparingByValue().reversed())
-                .toList();
-
-        var pieSlices = new java.util.ArrayList<PieSlice>();
-        java.math.BigDecimal other = java.math.BigDecimal.ZERO;
-        for (int i=0; i<pieSorted.size(); i++) {
-            var e = pieSorted.get(i);
-            if (i < Math.max(pieTopN, 1)) {
-                pieSlices.add(new PieSlice(e.getKey(), e.getValue()));
+        for (var e : entries) {
+            if (e.getValue().compareTo(cutoff) >= 0) {
+                labels.add(e.getKey());
+                values.add(e.getValue());
             } else {
-                other = other.add(e.getValue(), MC);
+                other = other.add(e.getValue());
             }
         }
-        if (other.signum() > 0) pieSlices.add(new PieSlice("Other", other));
+        if (other.signum() > 0) {
+            labels.add("OTHER");
+            values.add(other);
+        }
 
-        var subtotals = platformSubtotal.entrySet().stream()
-                .map(e -> new PlatformTotal(e.getKey(), e.getValue()))
-                .sorted(java.util.Comparator.comparing(PlatformTotal::exchange))
-                .toList();
-
-        return new Dashboard2(vsCurrency, subtotals, tokensFiltered, pieSlices, grand, unresolved);
+        return new PieData(labels, values);
     }
 
+    // ==================== helpers ====================
 
+    /**
+     * Convert ticker symbols to CoinGecko IDs, fetch simple prices, then map back to SYMBOL -> price.
+     */
+    private Map<String, BigDecimal> priceBySymbol(Collection<String> symbols, String vs) {
+        if (symbols == null || symbols.isEmpty()) return Map.of();
+
+        // SYMBOL -> id (fallback to lowercase)
+        Map<String, String> symToId = new LinkedHashMap<>();
+        for (String sym : symbols) {
+            String id = toGeckoId(sym);
+            if (id != null) symToId.put(sym, id);
+        }
+
+        if (symToId.isEmpty()) return Map.of();
+
+        // Call CoinGecko with IDs
+        Map<String, BigDecimal> idToPrice = prices.getSimplePrice(new LinkedHashSet<>(symToId.values()), vs.toLowerCase(Locale.ROOT));
+        if (idToPrice == null) idToPrice = Map.of();
+
+        // Map back: SYMBOL -> price
+        Map<String, BigDecimal> out = new LinkedHashMap<>();
+        for (var e : symToId.entrySet()) {
+            out.put(e.getKey(), idToPrice.getOrDefault(e.getValue(), BigDecimal.ZERO));
+        }
+        return out;
+    }
+
+    /**
+     * Minimal symbol → CoinGecko ID mapping.
+     * Extend this map or fetch from DB/config. Fallback is lowercase symbol (best-effort).
+     */
+    private static String toGeckoId(String symbol) {
+        if (symbol == null || symbol.isBlank()) return null;
+        String sym = symbol.toUpperCase(Locale.ROOT);
+        // strip suffixes like ".F"
+        int dot = sym.indexOf('.');
+        if (dot > 0) sym = sym.substring(0, dot);
+
+        // common direct mappings
+        String id = STATIC_MAP.get(sym);
+        if (id != null) return id;
+
+        // fallback: lowercased symbol (works for many like BTC->btc? NO (bitcoin), ETH->eth? NO (ethereum))
+        // Better: maintain a proper map per your earlier config.
+        return FALLBACKS.getOrDefault(sym, sym.toLowerCase(Locale.ROOT));
+    }
+
+    // Populate with your earlier mapping list; a small starter set:
+    private static final Map<String, String> STATIC_MAP = Map.ofEntries(
+            Map.entry("BTC", "bitcoin"),
+            Map.entry("ETH", "ethereum"),
+            Map.entry("USDT", "tether"),
+            Map.entry("USDC", "usd-coin"),
+            Map.entry("BNB", "binancecoin"),
+            Map.entry("ADA", "cardano"),
+            Map.entry("XRP", "ripple"),
+            Map.entry("SOL", "solana"),
+            Map.entry("LTC", "litecoin"),
+            Map.entry("LINK", "chainlink"),
+            Map.entry("DOT", "polkadot"),
+            Map.entry("AVAX", "avalanche-2"),
+            Map.entry("LUNA", "terra-luna"),
+            Map.entry("LUNC", "terra-luna-classic"),
+            Map.entry("MATIC", "matic-network"),
+            Map.entry("POL", "polygon-ecosystem-token")
+            // …extend as needed
+    );
+
+    // For assets where symbol==id in practice (rare); leave empty or add cases.
+    private static final Map<String, String> FALLBACKS = Map.of();
 }
