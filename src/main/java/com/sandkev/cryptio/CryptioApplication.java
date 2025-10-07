@@ -8,10 +8,10 @@ import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
 @SpringBootApplication
 @EntityScan(basePackages = "com.sandkev.cryptio.domain")
 @EnableJpaRepositories(basePackages = "com.sandkev.cryptio")
-public class CrytpioApplication {
+public class CryptioApplication {
 
 	public static void main(String[] args) {
-		SpringApplication.run(CrytpioApplication.class, args);
+		SpringApplication.run(CryptioApplication.class, args);
 	}
 
 }

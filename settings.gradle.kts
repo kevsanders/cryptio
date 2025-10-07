@@ -1,1 +1,1 @@
-rootProject.name = "crytpio"
+rootProject.name = "cryptio"
