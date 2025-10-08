@@ -9,12 +9,12 @@ Balances are ingested via exchange APIs, normalized into a relational schema (ma
 
 ## Features
 
-- 📊 View current holdings across accounts/exchanges
-- 🔄 One-click **Fetch from Binance/Kraken** to update balances
-- 🗄️ Schema managed with **Flyway** (separate H2/Postgres migrations)
-- 🧩 Vendor-specific quirks (Kraken asset aliases, etc.) handled via `asset_alias`
-- 🐳 Supports in-memory **H2** for dev, **Postgres** for prod
-- 🔐 API keys provided via environment variables
+- View current holdings across accounts/exchanges
+- One-click **Fetch from Binance/Kraken** to update balances
+-  Schema managed with **Flyway** (separate H2/Postgres migrations)
+- Vendor-specific quirks (Kraken asset aliases, etc.) handled via `asset_alias`
+- Supports in-memory **H2** for dev, **Postgres** for prod
+- API keys provided via environment variables
 
 ---
 
@@ -24,6 +24,10 @@ Balances are ingested via exchange APIs, normalized into a relational schema (ma
 - Java 21 (tested with Corretto 21.0.7)
 - Gradle 8+
 - (Optional) Docker for running Postgres
+
+## Architecture
+[![Architecture overview](src/main/resources/docs/architecture-diagram-v1.png)](src/main/resources/docs/architecture-diagram-v1.png)
+
 
 ### Clone & Build
 ```bash
