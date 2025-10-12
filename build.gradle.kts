@@ -54,6 +54,9 @@ dependencies {
 
 }
 
+// Move ALL Gradle outputs away from OneDrive
+layout.buildDirectory.set(file("C:/dev/_gradle_builds/cryptio"))
+
 tasks.test {
 	useJUnitPlatform()
 }

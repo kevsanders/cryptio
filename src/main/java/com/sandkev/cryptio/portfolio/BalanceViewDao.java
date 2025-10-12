@@ -17,7 +17,7 @@ public class BalanceViewDao {
 
     public List<Row> latest(String exchange, String account) {
         return jdbc.query("""
-      select exchange, account, asset, free, locked, total, as_of
+      select exchange, account, asset, free_amt, locked_amt, total_amt, as_of
       from v_latest_balance
       where (? is null or lower(exchange)=lower(?))
         and (? is null or account=?)

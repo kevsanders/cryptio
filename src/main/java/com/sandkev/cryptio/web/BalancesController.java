@@ -2,6 +2,7 @@
 package com.sandkev.cryptio.web;
 
 import com.sandkev.cryptio.portfolio.BalanceViewDao;
+import com.sandkev.cryptio.spot.BalanceIngestService;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.*;
@@ -11,15 +12,20 @@ import org.springframework.web.bind.annotation.*;
 public class BalancesController {
 
     private final BalanceViewDao balances;
+    private final BalanceIngestService ingestService;
 
-    public BalancesController(BalanceViewDao balances) {
+    public BalancesController(BalanceViewDao balances, BalanceIngestService ingestService) {
         this.balances = balances;
+        this.ingestService = ingestService;
     }
 
     @GetMapping("/balances")
     public String balances(@RequestParam(required = false) String exchange,
                            @RequestParam(defaultValue = "primary") String account,
                            Model model) {
+
+        ingestService.ingestBinance(account);
+        //ingestService.ingestKraken(account);
 
         var rows = balances.latest(exchange, account);
         model.addAttribute("exchange", exchange);
