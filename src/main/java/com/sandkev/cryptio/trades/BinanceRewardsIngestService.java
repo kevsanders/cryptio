@@ -4,6 +4,7 @@ package com.sandkev.cryptio.trades;
 //package com.sandkev.cryptio.binance;
 
 import com.sandkev.cryptio.ingest.IngestCheckpointDao;
+import com.sandkev.cryptio.spot.BinanceSignedClient;
 import com.sandkev.cryptio.tx.TxWriter;
 import org.springframework.stereotype.Service;
 
@@ -41,7 +42,7 @@ public class BinanceRewardsIngestService {
             String path = client.signedGetPath("/sapi/v1/asset/assetDividend", p);
 
             @SuppressWarnings("unchecked")
-            Map<String,Object> resp = client.getJson(path, Map.class, "Binance assetDividend error");
+            Map<String,Object> resp = client.getJson(path, Map.class);
 
             @SuppressWarnings("unchecked")
             List<Map<String,Object>> rows = (List<Map<String,Object>>) resp.getOrDefault("rows", List.of());

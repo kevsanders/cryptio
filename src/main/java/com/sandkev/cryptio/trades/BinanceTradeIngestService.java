@@ -4,8 +4,11 @@ package com.sandkev.cryptio.trades;
 
 import com.sandkev.cryptio.config.BinanceSpotProperties;
 import com.sandkev.cryptio.portfolio.AssetUniverseDao;
+import com.sandkev.cryptio.spot.BinanceSignedClient;
 import com.sandkev.cryptio.tx.TxWriter;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
@@ -27,17 +30,21 @@ import java.util.*;
 @Slf4j
 public class BinanceTradeIngestService {
 
-    private final WebClient http;              // from BinanceSpotConfig
+    private final BinanceSignedClient binanceClient;              // from BinanceSpotConfig
     private final BinanceSpotProperties props; // has apiKey/secret/timeout
     private final JdbcTemplate jdbc;
     private final TxWriter writer;
     private final AssetUniverseDao assetsDao;
     private final BinanceSymbolMapper symbolMapper;
 
-    public BinanceTradeIngestService(WebClient binanceWebClient, BinanceSpotProperties props,
+    private static final ParameterizedTypeReference<List<Map<String,Object>>> LIST_OF_MAP =
+            new ParameterizedTypeReference<>() {};
+
+
+    public BinanceTradeIngestService(@Qualifier("binanceSignedClient") BinanceSignedClient binanceClient, BinanceSpotProperties props,
                                      JdbcTemplate jdbc, TxWriter writer, AssetUniverseDao assetsDao,
                                      BinanceSymbolMapper symbolMapper) {
-        this.http = binanceWebClient;
+        this.binanceClient = binanceClient;
         this.props = props;
         this.jdbc = jdbc;
         this.writer = writer;
@@ -196,7 +203,7 @@ public class BinanceTradeIngestService {
         // IMPORTANT: fromId is mutually exclusive with start/end time for /api/v3/myTrades
         boolean useFromIdOnly = (fromId != null);
 
-        LinkedHashMap<String,String> p = new LinkedHashMap<>();
+        LinkedHashMap<String,Object> p = new LinkedHashMap<>();
         p.put("symbol", symbol);
         if (!useFromIdOnly && startTimeMs != null && startTimeMs > 0) {
             p.put("startTime", String.valueOf(startTimeMs));
@@ -216,13 +223,12 @@ public class BinanceTradeIngestService {
         try {
             log.debug("Fetching trades for symbol={} (uri={})", symbol, uri);
             @SuppressWarnings("unchecked")
-            List<Map<String,Object>> out = http.get()
-                    .uri(uri) // <-- use the canonical string you signed
-                    .retrieve()
-                    .onStatus(s -> s.value() >= 400, resp -> resp.bodyToMono(String.class).map(body ->
-                            new RuntimeException("Binance myTrades error " + resp.statusCode().value() + ": " + body)))
-                    .bodyToMono(List.class)
-                    .block();
+            // Binance returns a top-level array
+            List<Map<String,Object>> out = binanceClient.get(
+                    "/sapi/v1/capital/deposit/hisrec",
+                    p,
+                    LIST_OF_MAP
+            );
             return out == null ? List.of() : out;
         } catch (RuntimeException ex) {
             // Optional: detect common Binance error codes in body
@@ -241,7 +247,7 @@ public class BinanceTradeIngestService {
         }
     }
 
-    private static String canonicalQuery(Map<String, String> params) {
+    private static String canonicalQuery(Map<String, Object> params) {
         // Keep stable order: symbol, startTime, limit, fromId, timestamp, recvWindow
         StringBuilder sb = new StringBuilder(128);
         boolean first = true;
@@ -249,7 +255,7 @@ public class BinanceTradeIngestService {
             if (e.getValue() == null) continue;
             if (!first) sb.append('&'); first = false;
             // Binance expects standard URL encoding of values, keys are plain ASCII
-            sb.append(e.getKey()).append('=').append(URLEncoder.encode(e.getValue(), StandardCharsets.UTF_8));
+            sb.append(e.getKey()).append('=').append(URLEncoder.encode(String.valueOf(e.getValue()), StandardCharsets.UTF_8));
         }
         return sb.toString();
     }

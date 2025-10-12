@@ -1,107 +1,58 @@
 package com.sandkev.cryptio.spot;
 
-import com.sandkev.cryptio.config.BinanceSpotProperties;
-import org.springframework.http.MediaType;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.stereotype.Service;
-import org.springframework.web.reactive.function.client.WebClient;
-import org.springframework.web.reactive.function.client.WebClientResponseException;
 
-import javax.crypto.Mac;
-import javax.crypto.spec.SecretKeySpec;
 import java.math.BigDecimal;
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
-import java.time.Instant;
-import java.util.*;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 
 @Service
+@RequiredArgsConstructor
+@Slf4j
 public class BinanceSpotPositionsService {
 
-    private final WebClient http;
-    private final BinanceSpotProperties props;
+    private static final ParameterizedTypeReference<BinanceAccountDto> ACCOUNT_TYPE =
+            new ParameterizedTypeReference<>() {};
 
-    public BinanceSpotPositionsService(WebClient binanceWebClient, BinanceSpotProperties props) {
-        this.http = binanceWebClient;
-        this.props = props;
-    }
+    private final BinanceSignedClient binanceSignedClient;
+
 
     /**
-     * Calls GET /api/v3/account and returns { asset -> free+locked } for nonzero balances.
+     * Fetch spot balances from Binance /api/v3/account and return totals per asset (free + locked).
+     * Zeros are omitted.
      */
     public Map<String, BigDecimal> fetchSpotBalances() {
-        long timestamp = Instant.now().toEpochMilli();
-        String query = "timestamp=" + timestamp + "&recvWindow=" + props.recvWindow();
-        String signature = hmacSha256(query, props.secretKey());
+        // You can request Binance to omit zeros (supported on /api/v3/account)
+        var params = new LinkedHashMap<String, Object>();
+        params.put("omitZeroBalances", true);
 
-        try {
-            var body = http.get()
-                    .uri(uri -> uri.path("/api/v3/account")
-                            .queryParam("timestamp", timestamp)
-                            .queryParam("recvWindow", props.recvWindow())
-                            .queryParam("signature", signature)
-                            .build())
-                    .accept(MediaType.APPLICATION_JSON)
-                    .retrieve()
-                    .bodyToMono(Map.class)
-                    .block();
+        var account = binanceSignedClient.get("/api/v3/account", params, ACCOUNT_TYPE);
+        if (account == null || account.balances() == null) return Map.of();
 
-            if (body == null) return Map.of();
-
-            // balances is an array of { asset, free, locked }
-            var balances = (List<Map<String, String>>) body.getOrDefault("balances", List.of());
-            var out = new LinkedHashMap<String, BigDecimal>(balances.size());
-            for (var b : balances) {
-                String asset = b.get("asset");
-                BigDecimal free = new BigDecimal(b.getOrDefault("free", "0"));
-                BigDecimal locked = new BigDecimal(b.getOrDefault("locked", "0"));
-                BigDecimal total = free.add(locked);
-                if (total.signum() != 0) {
-                    out.put(asset, total);
-                }
+        // balances is an array of { asset, free, locked }
+        var out = new LinkedHashMap<String, BigDecimal>(account.balances().size());
+        for (var b : account.balances()) {
+            // Binance returns free/locked as strings (e.g., "0.00000000")
+            BigDecimal free   = safeDecimal(b.free());
+            BigDecimal locked = safeDecimal(b.locked());
+            BigDecimal total  = free.add(locked);
+            if (total.signum() != 0) {
+                out.put(b.asset(), total);
             }
-            return out;
-        } catch (WebClientResponseException e) {
-            // Common causes: invalid API permissions, timestamp skew, IP restrictions, 429
-            throw new RuntimeException("Binance /api/v3/account failed: " + e.getRawStatusCode() + " " + e.getResponseBodyAsString(), e);
         }
+        return out;
     }
 
-    private static String hmacSha256(String data, String secret) {
-        try {
-            Mac mac = Mac.getInstance("HmacSHA256");
-            mac.init(new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
-            byte[] raw = mac.doFinal(data.getBytes(StandardCharsets.UTF_8));
-            // hex
-            StringBuilder sb = new StringBuilder(raw.length * 2);
-            for (byte b : raw) sb.append(String.format("%02x", b));
-            return sb.toString();
-        } catch (Exception e) {
-            throw new IllegalStateException("HMAC-SHA256 signing failed", e);
-        }
+    private static BigDecimal safeDecimal(String v) {
+        if (v == null || v.isBlank()) return BigDecimal.ZERO;
+        return new BigDecimal(v);
     }
 
-    // Utility if you need to safely encode additional params later
-    @SuppressWarnings("unused")
-    private static String enc(String v) {
-        return URLEncoder.encode(v, StandardCharsets.UTF_8);
-    }
-
-/*
-    // Example adapter -> your HoldingRepo
-    // Call this in a job/controller to upsert holdings
-    public void syncSpotHoldings(HoldingRepo holdings) {
-        var balances = fetchSpotBalances();
-        balances.forEach((asset, qty) -> {
-            // upsert by asset; simplified sample
-            var existing = holdings.findAll().stream()
-                    .filter(h -> h.getAsset().equals(asset))
-                    .findFirst()
-                    .orElseGet(() -> holdings.save(new Holding(asset, BigDecimal.ZERO, BigDecimal.ZERO)));
-            existing.setQuantity(qty);
-            holdings.save(existing);
-        });
-    }
-*/
-
+    // --- Minimal DTOs matching /api/v3/account payload ---
+    public record BinanceAccountDto(List<BinanceBalanceDto> balances) {}
+    public record BinanceBalanceDto(String asset, String free, String locked) {}
 }
-

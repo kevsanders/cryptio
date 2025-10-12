@@ -4,6 +4,7 @@ package com.sandkev.cryptio.trades;
 //package com.sandkev.cryptio.binance;
 
 import com.sandkev.cryptio.ingest.IngestCheckpointDao;
+import com.sandkev.cryptio.spot.BinanceSignedClient;
 import com.sandkev.cryptio.tx.TxWriter;
 import org.springframework.stereotype.Service;
 
@@ -37,7 +38,7 @@ public class BinanceDustIngestService {
             String path = client.signedGetPath("/sapi/v1/asset/dribblet", p);
 
             @SuppressWarnings("unchecked")
-            Map<String,Object> resp = client.getJson(path, Map.class, "Binance dribblet error");
+            Map<String,Object> resp = client.getJson(path, Map.class);
 
             List<Map<String,Object>> dribs = (List<Map<String,Object>>) resp.getOrDefault("userAssetDribblets", List.of());
             if (dribs.isEmpty()) break;

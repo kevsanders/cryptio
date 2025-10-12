@@ -4,10 +4,11 @@ package com.sandkev.cryptio.trades;
 //package com.sandkev.cryptio.binance;
 
 import com.sandkev.cryptio.config.BinanceSpotProperties;
+import com.sandkev.cryptio.spot.BinanceSignedClient;
+import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
-import org.springframework.web.reactive.function.client.WebClient;
 
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
@@ -20,14 +21,16 @@ import java.util.*;
 @Service
 public class BinanceTransferIngestService {
 
-    private final WebClient http;
+    private static final ParameterizedTypeReference<List<Map<String,Object>>> LIST_OF_MAP =
+            new ParameterizedTypeReference<>() {};
+    private final BinanceSignedClient binanceSignedClient;
     private final BinanceSpotProperties props;
     private final JdbcTemplate jdbc;
 
-    public BinanceTransferIngestService(WebClient binanceWebClient,
+    public BinanceTransferIngestService(BinanceSignedClient binanceSignedClient,
                                         BinanceSpotProperties props,
                                         JdbcTemplate jdbc) {
-        this.http = binanceWebClient;
+        this.binanceSignedClient = binanceSignedClient;
         this.props = props;
         this.jdbc = jdbc;
     }
@@ -54,7 +57,7 @@ public class BinanceTransferIngestService {
             long timestamp = System.currentTimeMillis();
             long recvWindow = 60_000L;
 
-            LinkedHashMap<String,String> p = new LinkedHashMap<>();
+            LinkedHashMap<String,Object> p = new LinkedHashMap<>();
             p.put("startTime", String.valueOf(pageStart));               // only if you want incremental paging
             p.put("timestamp", String.valueOf(timestamp));
             p.put("recvWindow", String.valueOf(recvWindow));
@@ -63,15 +66,12 @@ public class BinanceTransferIngestService {
             String sig = signHmacSHA256(qs);
             String uri = "/sapi/v1/capital/deposit/hisrec?" + qs + "&signature=" + sig;
 
-            @SuppressWarnings("unchecked")
-            List<Map<String,Object>> rows = http.get()
-                    .uri(uri)                           // …is what we send
-                    .retrieve()
-                    .onStatus(s -> s.value() >= 400, resp -> resp.bodyToMono(String.class).map(body ->
-                            new RuntimeException("Binance deposits error " + resp.statusCode().value() + ": " + body)))
-                    .bodyToMono(List.class)
-                    .block();
-
+            // Binance returns a top-level array
+            List<Map<String, Object>> rows = binanceSignedClient.get(
+                    "/sapi/v1/capital/deposit/hisrec",
+                    p,
+                    LIST_OF_MAP
+            );
             if (rows == null || rows.isEmpty()) break;
 
             long maxTs = pageStart;
@@ -142,28 +142,19 @@ public class BinanceTransferIngestService {
         int inserted = 0;
         long pageStart = startMs;
         for (int page = 0; page < 200; page++) {
-            var signed = sign(Map.of(
+            Map<String, Object> params = Map.of(
                     "startTime", Long.toString(pageStart),
-                    "limit", "1000"
-            ));
+                    "limit", "1000",
+                    "timestamp", "" + System.currentTimeMillis(),
+                    "recvWindow", "" +  props.recvWindow()
+            );
 
             final long pageStartOne = pageStart;
-            @SuppressWarnings("unchecked")
-            List<Map<String,Object>> rows = http.get()
-                    .uri(uri -> uri.path("/sapi/v1/capital/withdraw/history")
-                            .queryParam("startTime", pageStartOne)
-                            .queryParam("limit", 1000)
-                            .queryParam("timestamp", signed.timestamp)
-                            .queryParam("recvWindow", signed.recvWindow)
-                            .queryParam("signature", signed.signature)
-                            .build())
-                    .accept(MediaType.APPLICATION_JSON)
-                    .retrieve()
-                    .onStatus(s -> s.value() >= 400, r -> r.bodyToMono(String.class).map(body ->
-                            new RuntimeException("Binance <endpoint> error " + r.statusCode().value() + ": " + body)))
-                    .bodyToMono(List.class)
-                    .block();
-
+            List<Map<String, Object>> rows = binanceSignedClient.get(
+                    "/sapi/v1/capital/deposit/hisrec",
+                    params,
+                    LIST_OF_MAP
+            );
             if (rows == null || rows.isEmpty()) break;
 
             long maxTs = pageStart;
@@ -251,7 +242,7 @@ public class BinanceTransferIngestService {
         }
     }
 
-    static String canonicalQuery(Map<String, String> params) {
+    static String canonicalQuery(Map<String, Object> params) {
         // Keep stable order: symbol, startTime, limit, fromId, timestamp, recvWindow
         StringBuilder sb = new StringBuilder(128);
         boolean first = true;
@@ -259,7 +250,7 @@ public class BinanceTransferIngestService {
             if (e.getValue() == null) continue;
             if (!first) sb.append('&'); first = false;
             // Binance expects standard URL encoding of values, keys are plain ASCII
-            sb.append(e.getKey()).append('=').append(URLEncoder.encode(e.getValue(), StandardCharsets.UTF_8));
+            sb.append(e.getKey()).append('=').append(URLEncoder.encode(String.valueOf(e.getValue()), StandardCharsets.UTF_8));
         }
         return sb.toString();
     }

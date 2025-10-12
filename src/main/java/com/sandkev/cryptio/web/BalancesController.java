@@ -8,7 +8,6 @@ import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.*;
 
 @Controller
-//@RequestMapping("/v2")
 public class BalancesController {
 
     private final BalanceViewDao balances;
