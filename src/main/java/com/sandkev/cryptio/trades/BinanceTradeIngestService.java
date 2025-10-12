@@ -3,15 +3,15 @@ package com.sandkev.cryptio.trades;
 //package com.sandkev.cryptio.binance;
 
 import com.sandkev.cryptio.config.BinanceSpotProperties;
+import com.sandkev.cryptio.ingest.IngestCheckpointDao;
 import com.sandkev.cryptio.portfolio.AssetUniverseDao;
 import com.sandkev.cryptio.spot.BinanceSignedClient;
-import com.sandkev.cryptio.tx.TxWriter;
+import com.sandkev.cryptio.tx.TxUpserter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
-import org.springframework.web.reactive.function.client.WebClient;
 
 import javax.annotation.Nullable;
 import javax.crypto.Mac;
@@ -33,23 +33,27 @@ public class BinanceTradeIngestService {
     private final BinanceSignedClient binanceClient;              // from BinanceSpotConfig
     private final BinanceSpotProperties props; // has apiKey/secret/timeout
     private final JdbcTemplate jdbc;
-    private final TxWriter writer;
+    private final TxUpserter writer;
     private final AssetUniverseDao assetsDao;
     private final BinanceSymbolMapper symbolMapper;
+    private final IngestCheckpointDao ckpt;
+
 
     private static final ParameterizedTypeReference<List<Map<String,Object>>> LIST_OF_MAP =
             new ParameterizedTypeReference<>() {};
 
 
     public BinanceTradeIngestService(@Qualifier("binanceSignedClient") BinanceSignedClient binanceClient, BinanceSpotProperties props,
-                                     JdbcTemplate jdbc, TxWriter writer, AssetUniverseDao assetsDao,
-                                     BinanceSymbolMapper symbolMapper) {
+                                     JdbcTemplate jdbc, TxUpserter writer, AssetUniverseDao assetsDao,
+                                     BinanceSymbolMapper symbolMapper,
+                                     IngestCheckpointDao ckpt) {
         this.binanceClient = binanceClient;
         this.props = props;
         this.jdbc = jdbc;
         this.writer = writer;
         this.assetsDao = assetsDao;
         this.symbolMapper = symbolMapper;
+        this.ckpt = ckpt;
     }
 
     /** New: ingest trades for ALL discovered assets for this account/exchange using dynamic symbol list. */
@@ -88,17 +92,22 @@ public class BinanceTradeIngestService {
 
 
     private int fetchAndUpsertTradesForSymbol(String symbol, String accountRef, Instant sinceInclusive) /*throws SymbolNotFound*/ {
-        long startMs = sinceInclusive != null ? sinceInclusive.toEpochMilli() : 0L;
+        //long startMs = sinceInclusive != null ? sinceInclusive.toEpochMilli() : 0L;
 
-        // Optional checkpoint: if we have a cursor_ts newer than given since, use it
-        var ck = jdbc.query(
-                "select cursor_ts from ingest_checkpoint where exchange='binance' and account_ref=? and kind='trades'",
-                (rs,i) -> rs.getTimestamp(1).toInstant(),
-                accountRef
-        );
-        if (!ck.isEmpty() && (sinceInclusive == null || ck.getFirst().isAfter(sinceInclusive))) {
-            startMs = ck.getFirst().toEpochMilli();
-        }
+//        // Optional checkpoint: if we have a cursor_ts newer than given since, use it
+//        var ck = jdbc.query(
+//                "select cursor_ts from ingest_checkpoint where exchange='binance' and account_ref=? and kind='trades'",
+//                (rs,i) -> rs.getTimestamp(1).toInstant(),
+//                accountRef
+//        );
+//        if (!ck.isEmpty() && (sinceInclusive == null || ck.getFirst().isAfter(sinceInclusive))) {
+//            startMs = ck.getFirst().toEpochMilli();
+//        }
+        long startMs = sinceInclusive != null ? sinceInclusive.toEpochMilli() :
+                ckpt.get("binance", accountRef, "trades").map(Instant::toEpochMilli).orElse(0L);
+
+
+
 
         int total = 0;
         Long fromId = null;
@@ -181,15 +190,16 @@ public class BinanceTradeIngestService {
                 }
             }
 
-            // Update checkpoint after each page
-            if (maxTradeTime > startMs) {
-                jdbc.update("""
-                    merge into ingest_checkpoint (exchange, account_ref, kind, cursor_str, cursor_ts, updated_at)
-                    key (exchange, account_ref, kind)
-                    values ('binance', ?, 'trades', ?, ?, current_timestamp)
-                """, accountRef, String.valueOf(fromId), new java.sql.Timestamp(maxTradeTime));
-                startMs = maxTradeTime;
-            }
+//            // Update checkpoint after each page
+//            if (maxTradeTime > startMs) {
+//                jdbc.update("""
+//                    merge into ingest_checkpoint (exchange, account_ref, kind, cursor_str, cursor_ts, updated_at)
+//                    key (exchange, account_ref, kind)
+//                    values ('binance', ?, 'trades', ?, ?, current_timestamp)
+//                """, accountRef, String.valueOf(fromId), new java.sql.Timestamp(maxTradeTime));
+//                startMs = maxTradeTime;
+//            }
+            ckpt.put("binance", accountRef, "trades", Instant.ofEpochMilli(maxTradeTime), null);
 
             if (trades.isEmpty()) break; // done
         }

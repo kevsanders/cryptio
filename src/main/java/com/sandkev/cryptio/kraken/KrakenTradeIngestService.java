@@ -1,16 +1,17 @@
 // src/main/java/com/sandkev/cryptio/kraken/KrakenTradeIngestService.java
 package com.sandkev.cryptio.kraken;
 
+import com.sandkev.cryptio.ingest.IngestCheckpointDao;
+import com.sandkev.cryptio.trades.KrakenSignedClient;
+import com.sandkev.cryptio.tx.TxUpserter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Service;
-import com.sandkev.cryptio.trades.KrakenSignedClient;
-import com.sandkev.cryptio.ingest.IngestCheckpointDao;
-import com.sandkev.cryptio.tx.TxWriter;
 
-import java.security.NoSuchAlgorithmException;
 import java.security.InvalidKeyException;
+import java.security.NoSuchAlgorithmException;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Set;
@@ -19,19 +20,20 @@ import java.util.Set;
 public class KrakenTradeIngestService {
     private static final Logger log = LoggerFactory.getLogger(KrakenTradeIngestService.class);
     private static final List<String> PREFERRED_QUOTES = List.of("USDT","USD","EUR","GBP");
+    private static final String EXCHANGE = "kraken";
 
     private final KrakenAssetUniverseDao assetDao;
     private final KrakenSymbolMapper mapper;
     private final KrakenSignedClient client;
     private final IngestCheckpointDao ckpt;
-    private final TxWriter tx;
+    private final TxUpserter tx;
 
     // TODO: inject your KrakenSignedClient (or http client), TxWriter, CheckpointDao, etc.
     public KrakenTradeIngestService(KrakenAssetUniverseDao assetDao,
                                     KrakenSymbolMapper mapper,
                                     KrakenSignedClient client,
                                     IngestCheckpointDao ckpt,
-                                    TxWriter tx) {
+                                    TxUpserter tx) {
         this.assetDao = assetDao;
         this.mapper = mapper;
         this.client = client;
@@ -88,9 +90,7 @@ public class KrakenTradeIngestService {
         int inserted = 0;
 
         // Resume from checkpoint if sinceInclusive is null
-        long startSec = (sinceInclusive != null ? sinceInclusive.getEpochSecond()
-                : ckpt.get("kraken", accountRef, "trades:" + pairAltName)
-                .map(Instant::getEpochSecond).orElse(0L));
+        final long startSec = effectiveStartMs("trades", sinceInclusive)/1000;
 
         int ofs = 0;          // Kraken pagination offset
         long maxSeenSec = startSec;
@@ -184,7 +184,7 @@ public class KrakenTradeIngestService {
 
         // Save checkpoint at max seen time (plus 1s to be safe)
         if (maxSeenSec > startSec) {
-            ckpt.put("kraken", accountRef, "trades:" + pairAltName, java.time.Instant.ofEpochSecond(maxSeenSec), null);
+            ckpt.saveSince(EXCHANGE+".trades", java.time.Instant.ofEpochSecond(maxSeenSec).toEpochMilli() + 1);
         }
         return inserted;
     }
@@ -202,4 +202,14 @@ public class KrakenTradeIngestService {
     }
 
     private record BaseQuote(String base, String quote) {}
+
+    private long effectiveStartMs(String kind, Instant sinceInclusive) {
+        long ck = ckpt.getSince(EXCHANGE+ "." + kind).orElse(0L);
+        long si = sinceInclusive != null ? sinceInclusive.toEpochMilli() : 0L;
+        long start = Math.max(ck, si);
+        if (start == 0L) start = System.currentTimeMillis() - Duration.ofDays(90).toMillis() + 1;
+        return start;
+        // (If you want “prefer since unless checkpoint is newer”, this already does it.)
+    }
+
 }

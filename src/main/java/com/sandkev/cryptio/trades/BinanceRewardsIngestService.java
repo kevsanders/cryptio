@@ -5,10 +5,11 @@ package com.sandkev.cryptio.trades;
 
 import com.sandkev.cryptio.ingest.IngestCheckpointDao;
 import com.sandkev.cryptio.spot.BinanceSignedClient;
-import com.sandkev.cryptio.tx.TxWriter;
+import com.sandkev.cryptio.tx.TxUpserter;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -19,13 +20,14 @@ public class BinanceRewardsIngestService {
 
     private final BinanceSignedClient client;
     private final IngestCheckpointDao ckpt;
-    private final TxWriter tx;
+    private final TxUpserter tx;
 
-    public BinanceRewardsIngestService(BinanceSignedClient client, IngestCheckpointDao ckpt, TxWriter tx) {
+    public BinanceRewardsIngestService(BinanceSignedClient client, IngestCheckpointDao ckpt, TxUpserter tx) {
         this.client = client; this.ckpt = ckpt; this.tx = tx;
     }
 
     public int ingest(String accountRef, Instant sinceInclusive) {
+        //final long startMs = effectiveStartMs("rewards", sinceInclusive);
         long startMs = sinceInclusive != null ? sinceInclusive.toEpochMilli() :
                 ckpt.get("binance", accountRef, "rewards").map(Instant::toEpochMilli).orElse(0L);
 
@@ -63,10 +65,20 @@ public class BinanceRewardsIngestService {
                 maxTs = Math.max(maxTs, divTime);
             }
 
+            //ckpt.saveSince("binance"+".rewards", Instant.ofEpochMilli(maxTs).toEpochMilli() + 1);
             ckpt.put("binance", accountRef, "rewards", Instant.ofEpochMilli(maxTs), null);
             if (maxTs <= pageStart) break;
             pageStart = maxTs + 1;
         }
         return inserted;
     }
+    private long effectiveStartMs(String kind, Instant sinceInclusive) {
+        long ck = ckpt.getSince("binance"+ "." + kind).orElse(0L);
+        long si = sinceInclusive != null ? sinceInclusive.toEpochMilli() : 0L;
+        long start = Math.max(ck, si);
+        if (start == 0L) start = System.currentTimeMillis() - Duration.ofDays(90).toMillis() + 1;
+        return start;
+        // (If you want “prefer since unless checkpoint is newer”, this already does it.)
+    }
+
 }
