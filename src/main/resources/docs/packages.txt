@@ -1,0 +1,123 @@
+com.sandkev.cryptio
+├─ bootstrap/                  # Application entry, config wiring that spans features
+│  ├─ CryptioApplication.java
+│  └─ config/
+│     ├─ PersistenceConfig.java     # JPA/H2/Postgres beans
+│     ├─ WebConfig.java             # MVC/Thymeleaf, Jackson, CORS
+│     ├─ SecurityConfig.java        # if applicable
+│     └─ ObservabilityConfig.java   # metrics, logging, tracing
+│
+├─ shared/                    # Shared-kernel: tiny and stable. NO feature rules here.
+│  ├─ model/
+│  │  ├─ Money.java
+│  │  ├─ Asset.java
+│  │  └─ Exchange.java
+│  ├─ db/
+│  │  └─ BaseEntity.java
+│  ├─ web/
+│  │  └─ PageResponse.java
+│  ├─ util/
+│  │  └─ ClockProvider.java
+│  └─ mapping/
+│     └─ Mappers.java
+│
+├─ exchange/                  # External systems – ports & adapters per exchange
+│  ├─ binance/
+│  │  ├─ api/                 # REST clients, DTOs from Binance JSON (adapter)
+│  │  ├─ signing/
+│  │  └─ mapper/              # to domain DTOs
+│  └─ kraken/
+│     ├─ api/
+│     ├─ signing/
+│     └─ mapper/
+│
+├─ accounts/                  # Exchange accounts & credentials mgmt
+│  ├─ domain/
+│  │  ├─ ExchangeAccountEntity.java
+│  │  ├─ AccountRef.java
+│  │  └─ AccountPolicy.java
+│  ├─ app/                    # application layer (use-cases)
+│  │  ├─ AccountService.java
+│  │  └─ AccountFacade.java   # orchestration/ports to other features
+│  ├─ infra/
+│  │  ├─ AccountRepository.java        # Spring Data
+│  │  └─ AccountJpaRepository.java     # adapter if needed
+│  └─ web/
+│     ├─ AccountController.java        # REST/Thymeleaf
+│     └─ views/                        # Thymeleaf fragments
+│
+├─ balances/                  # Feature slice 1
+│  ├─ domain/
+│  │  ├─ BalanceSnapshotEntity.java
+│  │  ├─ SpotBalanceEntity.java
+│  │  ├─ BalancePolicy.java            # business rules
+│  │  └─ events/BalanceSnapshotCreated.java
+│  ├─ app/
+│  │  ├─ BalanceIngestService.java     # use-cases (ingest, diff-only updates)
+│  │  ├─ BalanceQueryService.java
+│  │  └─ RecalcUseCase.java
+│  ├─ infra/
+│  │  ├─ SpotBalanceRepository.java
+│  │  ├─ BalanceSnapshotRepository.java
+│  │  └─ Sql/ or jpa/ (custom impls, batch, projections)
+│  └─ web/
+│     ├─ BalancesController.java
+│     └─ views/ (balances.html, fragments)
+│
+├─ transactions/              # Feature slice 2
+│  ├─ domain/ (KrakenTxEntity, etc.)
+│  ├─ app/    (TxImportService, TxWriter, Upsert rules)
+│  ├─ infra/  (TxRepository, batch upserts)
+│  └─ web/    (TransactionsController, views)
+│
+├─ prices/                    # Feature slice 3 (coingecko, FX, etc.)
+│  ├─ domain/ (PricePoint, Ticker, Candle)
+│  ├─ app/ (PriceService, CacheRefreshJob)
+│  ├─ infra/ (PriceRepository, external clients)
+│  └─ web/
+│
+├─ reconciliation/            # Feature slice 4
+│  ├─ domain/ (ReconcileRun, Diff, MatchResult)
+│  ├─ app/ (ReconcileService)
+│  ├─ infra/ (ReconcileRepository)
+│  └─ web/
+│
+├─ portfolio/                 # Valuation & reports
+│  ├─ domain/ (Position, Lot, Valuation)
+│  ├─ app/ (PortfolioValuationService)
+│  ├─ infra/ (read-models, projections)
+│  └─ web/
+│
+└─ reporting/                 # CSV/Excel/PDF/Explain outputs
+   ├─ app/ (ReportService, exporters)
+   └─ web/ (download endpoints)
+
+
+#-- further qualification for public interfaces
+ - Use api for inbound ports (the “use cases” other code calls).
+ - Use spi for outbound ports (the “things I need implemented,” e.g., persistence, HTTP clients).
+
+Why this works well
+ - Clarity: api = “call me”; spi = “implement me.”
+ - Encapsulation: app stays internal; infra holds concrete adapters; only api/spi are public.
+ - Hexagonal-friendly: Inbound (primary) vs outbound (secondary) ports are obvious without resorting to port.in/out package names (which are fine too if you prefer that style).
+
+com.sandkev.cryptio.balances
+├─ api/                # inbound ports (use cases callers invoke)
+│  ├─ BalanceIngestUseCase.java
+│  └─ BalanceQueryUseCase.java
+├─ spi/                # outbound ports (to be implemented by infra)
+│  ├─ BalanceSnapshotWriter.java      // <- your example belongs here
+│  └─ PriceFeedClient.java
+├─ app/                # internal orchestration (package-private where possible)
+│  └─ BalanceIngestService.java       // uses spi.* and implements api.*
+├─ domain/
+│  └─ ...
+├─ infra/
+│  ├─ jpa/
+│  │  ├─ SpringDataBalanceSnapshotRepo.java      // package-private
+│  │  └─ JpaBalanceSnapshotWriter.java           // package-private, implements spi.BalanceSnapshotWriter
+│  └─ binance/
+│     └─ WebClientPriceFeed.java                 // implements spi.PriceFeedClient
+└─ web/
+   └─ BalancesController.java                    // calls api.BalanceIngestUseCase

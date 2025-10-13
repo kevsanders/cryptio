@@ -1,0 +1,497 @@
+#Entities & tables
+--------------------
+#A. Reference & Accounts
+
+-- Exchanges & accounts
+create table exchange (
+  id                bigint generated always as identity primary key,
+  code              varchar(32) not null unique,       -- 'binance', 'kraken'
+  name              varchar(128) not null
+);
+
+create table exchange_account (
+  id                bigint generated always as identity primary key,
+  exchange_id       bigint not null references exchange(id),
+  external_ref      varchar(128) not null,             -- exchange-specific account id/tag
+  nickname          varchar(128),
+  unique (exchange_id, external_ref)
+);
+
+-- Assets & aliases
+create table asset (
+  id                bigint generated always as identity primary key,
+  symbol            varchar(64) not null,              -- canonical symbol (BTC, ETH, GBP)
+  chain             varchar(64) not null default '',   -- 'ETH', 'BSC' (optional)
+  contract          varchar(128) not null default '',  -- ERC-20 addr etc.
+  decimals          int not null default 18,
+  unique (symbol, chain, contract)
+);
+
+create table asset_alias (
+  id                bigint generated always as identity primary key,
+  exchange_id       bigint not null references exchange(id),
+  raw_symbol        varchar(64) not null,              -- e.g. 'XBT' on Kraken
+  asset_id          bigint not null references asset(id),
+  unique (exchange_id, raw_symbol)
+);
+
+
+Indexes to consider: (exchange_id, external_ref) on exchange_account, (exchange_id, raw_symbol) on asset_alias.
+
+#B. RAW ingest (append-only, per exchange)
+
+Store exactly what the API gave you (plus normalized FK links to account where possible).
+
+-- Raw transactions per exchange (one table per exchange keeps ingestion simple & lossless)
+create table raw_tx (
+  id                bigint generated always as identity primary key,
+  exchange_id       bigint not null references exchange(id),
+  exchange_account_id bigint not null references exchange_account(id),
+  raw_type          varchar(64) not null,          -- e.g. 'trade', 'deposit', 'withdrawal', 'convert'
+  raw_json          jsonb not null,                -- full payload
+  occurred_at       timestamptz not null,          -- exchange timestamp
+  seen_at           timestamptz not null default now(),
+  source_hash       varchar(64) not null,          -- SHA-256 of raw payload to dedupe
+  unique (exchange_id, exchange_account_id, source_hash)
+);
+
+-- Raw balances (snapshots pulled from exchanges)
+create table raw_balance_snapshot (
+  id                bigint generated always as identity primary key,
+  exchange_id       bigint not null references exchange(id),
+  exchange_account_id bigint not null references exchange_account(id),
+  occurred_at       timestamptz not null,
+  raw_json          jsonb not null,
+  seen_at           timestamptz not null default now(),
+  source_hash       varchar(64) not null,
+  unique (exchange_id, exchange_account_id, source_hash)
+);
+
+
+If you prefer one raw table per exchange, keep the same columns; the logic stays identical.
+
+C. Normalized transaction ledger (exchange-agnostic)
+
+A double-entry-ish model lets you express any event as legs (debit/credit of assets, including fees).
+
+-- Canonical transaction
+create table tx (
+  id                bigint generated always as identity primary key,
+  exchange_account_id bigint not null references exchange_account(id),
+  type              varchar(32) not null,          -- BUY/SELL/TRANSFER/CONVERT/DEPOSIT/WITHDRAW/REWARD/FEE/ADJUST
+  occurred_at       timestamptz not null,
+  note              varchar(256),
+  -- lineage back to RAW
+  raw_tx_id         bigint not null references raw_tx(id),
+  unique (exchange_account_id, raw_tx_id)
+);
+
+-- Transaction legs (asset movements). Positive qty = received; negative = delivered.
+create table tx_leg (
+  id                bigint generated always as identity primary key,
+  tx_id             bigint not null references tx(id) on delete cascade,
+  asset_id          bigint not null references asset(id),
+  quantity          numeric(38, 18) not null,      -- +/- amount
+  unit_price_quote  numeric(38, 18),               -- price in quote asset (nullable for non-trades)
+  quote_asset_id    bigint references asset(id),   -- e.g. GBP or USDT
+  fee_asset_id      bigint references asset(id),
+  fee_amount        numeric(38, 18),
+  leg_role          varchar(16) not null,          -- BASE/QUOTE/FEE/TRANSFER_IN/TRANSFER_OUT/CONVERT_FROM/CONVERT_TO
+  idx               int not null default 0         -- to preserve original order
+);
+create index tx_leg_tx_idx on tx_leg(tx_id);
+create index tx_leg_asset_idx on tx_leg(asset_id);
+
+
+This structure handles spot trades (two main legs + fee), deposits/withdrawals (single leg + maybe fee), conversions, rewards, etc.
+
+D. Normalized balance snapshots & reconciliation
+
+We keep snapshots per account & time and reconcile ledger-derived balances against exchange snapshots.
+
+-- Normalized snapshot header
+create table balance_snapshot (
+  id                bigint generated always as identity primary key,
+  exchange_account_id bigint not null references exchange_account(id),
+  occurred_at       timestamptz not null,
+  raw_balance_snapshot_id bigint not null references raw_balance_snapshot(id),
+  unique (exchange_account_id, occurred_at)
+);
+
+-- Snapshot lines (per asset)
+create table balance_snapshot_line (
+  id                bigint generated always as identity primary key,
+  snapshot_id       bigint not null references balance_snapshot(id) on delete cascade,
+  asset_id          bigint not null references asset(id),
+  free_amt          numeric(38, 18) not null,
+  locked_amt        numeric(38, 18) not null default 0,
+  unique (snapshot_id, asset_id)
+);
+
+-- Reconciliation runs (comparing ledger vs snapshot)
+create table balance_recon_run (
+  id                bigint generated always as identity primary key,
+  exchange_account_id bigint not null references exchange_account(id),
+  snapshot_id       bigint not null references balance_snapshot(id),
+  tx_cutoff_at      timestamptz not null,                -- up to which tx included
+  started_at        timestamptz not null default now(),
+  finished_at       timestamptz,
+  status            varchar(16) not null default 'RUNNING', -- RUNNING/OK/WARN/FAIL
+  unique (exchange_account_id, snapshot_id, tx_cutoff_at)
+);
+
+-- Per-asset reconciliation result
+create table balance_recon_diff (
+  id                bigint generated always as identity primary key,
+  recon_run_id      bigint not null references balance_recon_run(id) on delete cascade,
+  asset_id          bigint not null references asset(id),
+  snapshot_total    numeric(38, 18) not null,            -- free + locked
+  ledger_total      numeric(38, 18) not null,            -- sum(tx) up to cutoff
+  delta             numeric(38, 18) not null,            -- ledger_total - snapshot_total
+  severity          varchar(16) not null                 -- OK/SMALL/WARN/CRITICAL
+);
+create index balance_recon_diff_asset_idx on balance_recon_diff(recon_run_id, asset_id);
+
+
+How you compute ledger_total: sum of tx_leg.quantity by asset_id for the account up to tx_cutoff_at, with deposits positive, withdrawals negative, etc.
+
+E. Prices & FX (for valuation and tax)
+create table price_tick (
+  id                bigint generated always as identity primary key,
+  base_asset_id     bigint not null references asset(id),
+  quote_asset_id    bigint not null references asset(id),
+  price             numeric(38, 18) not null,
+  as_of             timestamptz not null,
+  source            varchar(32) not null,        -- 'coingecko','binance'
+  unique (base_asset_id, quote_asset_id, as_of, source)
+);
+
+
+Index on (base_asset_id, quote_asset_id, as_of desc) for fast lookups.
+
+F. Tax lots & UK Share Matching (Same-day → 30-day → Section 104 pool)
+
+We’ll treat acquisitions and disposals as events derived from tx (filtered on trading types), and then record matches that tie a disposal to one of: same-day acquisitions, 30-day acquisitions, or the running Section 104 pool.
+
+1) Pools & lots
+-- Section 104 pool (per account + asset)
+create table tax_pool (
+  id                bigint generated always as identity primary key,
+  exchange_account_id bigint not null references exchange_account(id),
+  asset_id          bigint not null references asset(id),
+  quantity          numeric(38,18) not null default 0,   -- running total (can be fractional)
+  cost_base         numeric(38,18) not null default 0,   -- in functional currency (e.g., GBP)
+  last_updated_at   timestamptz not null default now(),
+  unique (exchange_account_id, asset_id)
+);
+
+-- Optional: granular lots (useful if you support non-UK jurisdictions too)
+create table tax_lot (
+  id                bigint generated always as identity primary key,
+  exchange_account_id bigint not null references exchange_account(id),
+  asset_id          bigint not null references asset(id),
+  acquired_tx_id    bigint not null references tx(id),
+  acquired_at       timestamptz not null,
+  quantity_open     numeric(38,18) not null,             -- remaining qty
+  unit_cost_fc      numeric(38,18) not null,             -- functional currency (e.g., GBP)
+  bucket            varchar(16) not null,                 -- 'SAME_DAY', 'WITHIN_30D', 'POOL'
+  expires_at        timestamptz                           -- for 30-day window matching
+);
+create index tax_lot_match_idx on tax_lot(exchange_account_id, asset_id, acquired_at);
+
+2) Disposals and matches
+-- Disposals derived from tx (SELL/CONVERT_FROM/etc.)
+create table tax_disposal (
+  id                bigint generated always as identity primary key,
+  tx_id             bigint not null references tx(id),
+  asset_id          bigint not null references asset(id),
+  disposed_qty      numeric(38,18) not null,             -- positive quantity disposed
+  proceeds_fc       numeric(38,18) not null,             -- in functional currency
+  disposed_at       timestamptz not null,
+  status            varchar(16) not null default 'PENDING'  -- PENDING/MATCHED
+);
+
+-- Matches showing which bucket satisfied each disposal portion
+create table tax_match (
+  id                bigint generated always as identity primary key,
+  disposal_id       bigint not null references tax_disposal(id) on delete cascade,
+  match_type        varchar(16) not null,                 -- 'SAME_DAY','WITHIN_30D','POOL'
+  lot_id            bigint references tax_lot(id),        -- null if directly from pool without discrete lot
+  matched_qty       numeric(38,18) not null,
+  cost_base_fc      numeric(38,18) not null,              -- allocated cost for matched_qty
+  gain_loss_fc      numeric(38,18) not null               -- proceeds portion - cost_base_fc
+);
+create index tax_match_disposal_idx on tax_match(disposal_id);
+
+Matching logic (UK rules)
+
+Same-day: match disposals with acquisitions on the same calendar day.
+
+30-day (“bed & breakfast”): match remaining disposals with acquisitions within the next 30 days (FIFO by time).
+
+Section 104 pool: match anything left against the pool (average cost).
+
+You implement this in services; the schema above records the outcome and lets you re-run if prices or mappings change.
+
+Tip: Store functional currency (GBP) conversions on ingest day using price_tick, so tax numbers are frozen per event (but keep the ability to recompute if you refresh historical FX).
+
+Data flows (end-to-end)
+
+Transactions:
+
+Ingest → raw_tx (append + dedupe by source_hash).
+
+Adapter maps to canonical → insert tx + tx_leg (with raw_tx_id).
+
+Tax derivation job finds acquisitions/disposals from tx and updates tax_lot / tax_pool and writes tax_disposal + tax_match.
+
+Balances:
+
+Ingest → raw_balance_snapshot.
+
+Normalize → balance_snapshot + balance_snapshot_line.
+
+Recon run: compute ledger balances from tx_leg up to cut-off, compare to snapshot; write balance_recon_run + balance_recon_diff.
+
+Indexing & partitioning
+
+tx(occurred_at), tx(exchange_account_id, occurred_at) for range scans.
+
+tx_leg(asset_id) and (tx_id) as above.
+
+Consider partitioning big tables (raw_tx, tx, tx_leg) by month or by exchange_account_id if data explodes.
+
+Put a bloom or hash index (in PG: BRIN/Bloom extensions) on source_hash for fast dedupe.
+
+Frequently-asked details
+
+Fees: model as tx_leg with leg_role='FEE' in its own asset. Include fee in tax cost basis.
+
+Internal transfers: represent as two tx (or one tx with two account refs) if you support cross-account consolidation; for single-account scope, use TRANSFER_IN/OUT legs that net to zero on consolidated view.
+
+Staking/rewards/airdrops: record as type='REWARD' with positive qty and cost-base per HMRC guidance (often market value at receipt).
+
+Rounding & precision: use numeric(38,18) everywhere for quantities and prices to avoid loss.
+
+Functional currency: store both the quote asset price and the functional currency converted values for tax.
+
+How this plugs into your package structure
+
+balances.infra.jpa: repositories for balance_snapshot*, recon tables.
+
+balances.app: reconciliation use case writes balance_recon_run/diff.
+
+transactions.infra.jpa: repos for tx, tx_leg, raw_tx.
+
+transactions.app: normalizer (raw → canonical), idempotency by source_hash.
+
+tax.spi: PriceProvider, FxProvider; tax.app: matchers + lot engine; tax.infra.jpa: tax_* repos.
+
+prices feature owns price_tick.
+
+Flyway migration order (V1..V6 example)
+
+V1__core_refs.sql → exchange, exchange_account, asset, asset_alias
+
+V2__raw.sql → raw_tx, raw_balance_snapshot
+
+V3__normalized_tx.sql → tx, tx_leg
+
+V4__balances.sql → balance_snapshot*
+
+V5__recon.sql → balance_recon_*
+
+V6__tax.sql → tax_pool, tax_lot, tax_disposal, tax_match
+
+V7__prices.sql → price_tick (or earlier if needed)
+
+Final take
+
+RAW → NORMALIZED → DERIVED keeps you audit-proof and re-playable.
+
+The canonical tx + tx_leg model is flexible enough for every exchange quirk.
+
+Reconciliation and Tax matching are stored artifacts, not transient computations—you can explain and re-run.
+
+Everything ties back to RAW with a hash so you can evolve mappers without losing lineage.
+
+If you want, I can generate Flyway DDL files (with indexes & constraints) and the Spring Data repositories/interfaces that match this plan.
+
+You said:
+excellent schema suggestion.
+since a large proportion of exchange activity is trading it would seem more efficient to keepthe BUY and SELL pair on the same record (since you can never do one withoout the other)
+
+eg here are 2 rows (of an example spreadsheet model)
+UTC	Wallet	Type	Action	BUY	SELL	FEE	BUY.AMT	SELL.AMT	FEE.AMT
+2017-06-03 10:59:41	Bittylicious	deposit	BUY	GBP			729.30		0.000000
+2017-06-03 10:59:41	Bittylicious	Trade	BUY	ETH	GBP	ETH	3.90	729.3000000	0.002568
+
+which allows staking rewards/deposits/withdrawals to be indicated as just a buy or a sell, but trades to represent both on one row.  Do you think this retains the flexibility you described
+ChatGPT said:
+Thought for 5s
+
+Short answer: pairing BUY/SELL on one row is super handy for reporting and human review, but you’ll want to keep the canonical double-entry (tx + tx_leg) underneath. Then expose a flat “trade_pair” view/materialized view that compacts a trade’s two sides (+ fee) into a single record. That gives you both: flexibility for weird cases + speed/readability for the 90% case.
+
+Here’s how to do it cleanly.
+
+Why keep legs canonically
+
+Trades are often messy:
+
+Partial fills (one order → many fills, each with its own fee/timestamp)
+
+Fee in a third asset (or multiple fees, rebates)
+
+Conversions that chain multiple legs
+
+Dust conversions/rounding and airdrop/bonus adjustments
+
+Maker/taker fee discounts applied per fill
+
+A single-row BUY/SELL schema breaks down in those edge cases. Legs handle all of it. Then you derive the paired row where appropriate.
+
+Pattern: canonical + flat “trade_pair” view
+1) Canonical stays as proposed
+
+tx (type = TRADE/DEPOSIT/WITHDRAW/…)
+
+tx_leg (BASE/QUOTE/FEE, +/- quantities)
+
+Example mapping of your row:
+
+Spreadsheet trade
+2017-06-03 10:59:41 | Trade | BUY ETH / SELL GBP | fee in ETH
+
+tx
+└─ id=42, type='TRADE', occurred_at='2017-06-03 10:59:41', note='Bittylicious'
+
+tx_leg
+- tx_id=42, asset=ETH,  quantity=+3.90,  leg_role='BASE'
+- tx_id=42, asset=GBP,  quantity=−729.30, leg_role='QUOTE'
+- tx_id=42, asset=ETH,  quantity=−0.002568, leg_role='FEE'
+
+
+Deposit row (GBP in):
+
+tx
+└─ id=41, type='DEPOSIT', occurred_at='2017-06-03 10:59:41', note='Bittylicious'
+
+tx_leg
+- tx_id=41, asset=GBP, quantity=+729.30, leg_role='TRANSFER_IN'
+
+2) Flat view for “paired” trades
+
+Create a view that compacts common trades into one row by conditional aggregation. It only emits rows for trades that look like “two main legs (+ optional fee)”.
+
+create or replace view trade_pair as
+select
+  t.id                           as tx_id,
+  t.exchange_account_id,
+  t.occurred_at,
+  -- buy leg (positive qty)
+  max(case when l.leg_role='BASE' and l.quantity > 0 then l.asset_id end) as buy_asset_id,
+  sum(case when l.leg_role='BASE' and l.quantity > 0 then l.quantity end) as buy_qty,
+
+  -- sell leg (negative qty -> report as positive)
+  max(case when l.leg_role='QUOTE' and l.quantity < 0 then l.asset_id end) as sell_asset_id,
+  sum(case when l.leg_role='QUOTE' and l.quantity < 0 then -l.quantity end) as sell_qty,
+
+  -- price as quote/buy (optional)
+  avg(case when l.leg_role='BASE' and l.quantity > 0 then l.unit_price_quote end) as price_quote,
+
+  -- one fee rolled up (still works if fee is in base or third asset)
+  max(case when l.leg_role='FEE' then l.asset_id end) as fee_asset_id,
+  sum(case when l.leg_role='FEE' then abs(l.fee_amount) end)             as fee_amt
+from tx t
+join tx_leg l on l.tx_id = t.id
+where t.type='TRADE'
+group by t.id, t.exchange_account_id, t.occurred_at
+having
+  -- ensure it really is a pair (1 positive base, 1 negative quote)
+  count(case when l.leg_role='BASE'  and l.quantity > 0 then 1 end) = 1
+  and count(case when l.leg_role='QUOTE' and l.quantity < 0 then 1 end) = 1;
+
+
+You can materialize it for speed:
+
+create materialized view trade_pair_mv as
+select ... (same as above) ...;
+
+-- Helpful indexes
+create index trade_pair_mv_time_idx on trade_pair_mv(occurred_at desc);
+create index trade_pair_mv_acct_idx on trade_pair_mv(exchange_account_id, occurred_at desc);
+
+
+Refresh it after ingest (or incrementally by tx_id window).
+
+Spreadsheet export becomes trivial:
+
+UTC | Wallet | Type | Action | BUY | SELL | FEE | BUY.AMT | SELL.AMT | FEE.AMT
+
+
+Map:
+
+UTC ← occurred_at
+
+Wallet ← account nickname
+
+Type ← 'Trade' / 'Deposit' / 'Withdrawal' / 'Reward'
+
+For trades:
+
+Action ← 'BUY' (buy_asset) vs ‘SELL’ (sell_asset) depending on viewpoint
+
+BUY/BUY.AMT ← buy_asset / buy_qty
+
+SELL/SELL.AMT ← sell_asset / sell_qty
+
+FEE/FEE.AMT ← fee_asset / fee_amt
+
+For deposits/withdrawals/rewards: only one side populated (the view can be a UNION of “trade_pair” + “single_leg_events”).
+
+Performance notes
+
+Storage efficiency: You still store three small leg rows per trade (base/quote/fee). That’s compact and indexable.
+
+Query speed: Analysts and UIs read from trade_pair_mv (or the view). You keep the leg flexibility for corner cases without penalizing common reads.
+
+Partial fills: Either:
+
+keep one tx per fill, then the view emits multiple rows (accurate), or
+
+group fills into a single tx (order-level), keeping idx on legs so price/fee averaging still makes sense. Pick one policy and stick to it.
+
+Reconciliation & tax with the paired view
+
+Reconciliation still sums legs per asset → that’s the ground truth the exchange snapshot is matched against.
+
+Tax/UK 30-day rules:
+
+Disposals = negative quantities of an asset (from legs).
+
+Acquisitions = positive quantities (from legs).
+
+Fees are included in cost basis (if in base asset, convert at trade time; if in quote/third asset, add to cost of acquisition accordingly).
+
+The paired view is just for user-facing clarity; the lot engine reads legs.
+
+When not to produce a paired row
+
+If a tx has:
+
+1 base asset (bundled conversions),
+
+1 quote asset,
+
+exotic multi-leg promotions/bonuses,
+then it won’t pass the having predicate—perfect. Those are presented via a fallback “raw/advanced” view (or multiple rows), while keeping the canonical data correct.
+
+TL;DR
+
+Keep double-entry legs canonically for correctness and flexibility.
+
+Provide a derived 1-row “trade_pair” (view/materialized view) for 90% of trades—this matches your spreadsheet model and speeds up reporting.
+
+Deposits/withdrawals/rewards remain single-leg events and can be UNIONed into the same flat export.
+
+If you’d like, I can generate the exact SQL (plus Flyway migrations) for the view/materialized view and the Spring Data projections you can bind straight into your CSV/Thymeleaf.

@@ -1,0 +1,266 @@
+src/main/resources/db/migration/ as-is.
+
+V1__core_refs.sql
+-- Exchanges, Accounts, Assets, Aliases
+create table if not exists exchange (
+  id        bigserial primary key,
+  code      varchar(32)  not null unique,  -- 'binance', 'kraken', ...
+  name      varchar(128) not null
+);
+
+create table if not exists exchange_account (
+  id            bigserial primary key,
+  exchange_id   bigint not null references exchange(id),
+  external_ref  varchar(128) not null,      -- exchange-specific account id/tag
+  nickname      varchar(128),
+  unique (exchange_id, external_ref)
+);
+create index if not exists ix_exchange_account_exchange on exchange_account(exchange_id);
+
+-- Canonical asset registry
+create table if not exists asset (
+  id        bigserial primary key,
+  symbol    varchar(64) not null,
+  chain     varchar(64) not null default '',
+  contract  varchar(128) not null default '',
+  decimals  int not null default 18,
+  unique (symbol, chain, contract)
+);
+
+-- Exchange-specific symbol mapping -> canonical asset
+create table if not exists asset_alias (
+  id            bigserial primary key,
+  exchange_id   bigint not null references exchange(id),
+  raw_symbol    varchar(64) not null,
+  asset_id      bigint not null references asset(id),
+  unique (exchange_id, raw_symbol)
+);
+create index if not exists ix_asset_alias_asset on asset_alias(asset_id);
+
+V2__raw_ingest.sql
+-- RAW transactions (append-only). Keep full payloads for audit/replay.
+create table if not exists raw_tx (
+  id                    bigserial primary key,
+  exchange_id           bigint not null references exchange(id),
+  exchange_account_id   bigint not null references exchange_account(id),
+  raw_type              varchar(64) not null,    -- 'trade','deposit','withdrawal','convert',...
+  raw_json              jsonb not null,
+  occurred_at           timestamptz not null,    -- exchange timestamp
+  seen_at               timestamptz not null default now(),
+  source_hash           varchar(64) not null,    -- SHA-256 (or similar) of raw_json + key fields
+  unique (exchange_id, exchange_account_id, source_hash)
+);
+create index if not exists ix_raw_tx_account_time on raw_tx(exchange_account_id, occurred_at desc);
+
+-- RAW balance snapshots
+create table if not exists raw_balance_snapshot (
+  id                    bigserial primary key,
+  exchange_id           bigint not null references exchange(id),
+  exchange_account_id   bigint not null references exchange_account(id),
+  occurred_at           timestamptz not null,
+  raw_json              jsonb not null,
+  seen_at               timestamptz not null default now(),
+  source_hash           varchar(64) not null,
+  unique (exchange_id, exchange_account_id, source_hash)
+);
+create index if not exists ix_raw_balance_snapshot_acct_time on raw_balance_snapshot(exchange_account_id, occurred_at desc);
+
+V3__normalized_tx.sql
+-- Canonical, exchange-agnostic transaction ledger.
+-- Use double-entry-ish legs for maximum flexibility.
+
+-- Transaction header
+create table if not exists tx (
+  id                    bigserial primary key,
+  exchange_account_id   bigint not null references exchange_account(id),
+  type                  varchar(32) not null,            -- BUY/SELL/TRADE/DEPOSIT/WITHDRAW/CONVERT/REWARD/FEE/ADJUST/TRANSFER
+  occurred_at           timestamptz not null,
+  note                  varchar(256),
+  raw_tx_id             bigint not null references raw_tx(id),
+  unique (exchange_account_id, raw_tx_id)
+);
+create index if not exists ix_tx_account_time on tx(exchange_account_id, occurred_at desc);
+create index if not exists ix_tx_type_time on tx(type, occurred_at desc);
+
+-- Transaction legs (asset movements). Positive qty = received; negative = delivered.
+create table if not exists tx_leg (
+  id                bigserial primary key,
+  tx_id             bigint not null references tx(id) on delete cascade,
+  asset_id          bigint not null references asset(id),
+  quantity          numeric(38,18) not null,            -- +/- amount
+  unit_price_quote  numeric(38,18),                     -- price in quote asset (if trade)
+  quote_asset_id    bigint references asset(id),
+  fee_asset_id      bigint references asset(id),
+  fee_amount        numeric(38,18),
+  leg_role          varchar(16) not null,               -- BASE/QUOTE/FEE/TRANSFER_IN/TRANSFER_OUT/CONVERT_FROM/CONVERT_TO
+  idx               int not null default 0
+);
+create index if not exists ix_tx_leg_tx on tx_leg(tx_id);
+create index if not exists ix_tx_leg_asset on tx_leg(asset_id);
+create index if not exists ix_tx_leg_role on tx_leg(leg_role);
+
+V4__balances.sql
+-- Normalized balance snapshots
+create table if not exists balance_snapshot (
+  id                      bigserial primary key,
+  exchange_account_id     bigint not null references exchange_account(id),
+  occurred_at             timestamptz not null,
+  raw_balance_snapshot_id bigint not null references raw_balance_snapshot(id),
+  unique (exchange_account_id, occurred_at)
+);
+create index if not exists ix_balance_snapshot_acct_time on balance_snapshot(exchange_account_id, occurred_at desc);
+
+create table if not exists balance_snapshot_line (
+  id            bigserial primary key,
+  snapshot_id   bigint not null references balance_snapshot(id) on delete cascade,
+  asset_id      bigint not null references asset(id),
+  free_amt      numeric(38,18) not null,
+  locked_amt    numeric(38,18) not null default 0,
+  unique (snapshot_id, asset_id)
+);
+create index if not exists ix_balance_snapshot_line_asset on balance_snapshot_line(asset_id);
+
+V5__reconciliation.sql
+-- Reconciliation runs compare ledger-derived balances vs exchange snapshots.
+
+create table if not exists balance_recon_run (
+  id                    bigserial primary key,
+  exchange_account_id   bigint not null references exchange_account(id),
+  snapshot_id           bigint not null references balance_snapshot(id),
+  tx_cutoff_at          timestamptz not null,            -- include tx up to this time
+  started_at            timestamptz not null default now(),
+  finished_at           timestamptz,
+  status                varchar(16) not null default 'RUNNING',  -- RUNNING/OK/WARN/FAIL
+  unique (exchange_account_id, snapshot_id, tx_cutoff_at)
+);
+create index if not exists ix_balance_recon_run_acct on balance_recon_run(exchange_account_id);
+create index if not exists ix_balance_recon_run_status on balance_recon_run(status);
+
+create table if not exists balance_recon_diff (
+  id              bigserial primary key,
+  recon_run_id    bigint not null references balance_recon_run(id) on delete cascade,
+  asset_id        bigint not null references asset(id),
+  snapshot_total  numeric(38,18) not null,
+  ledger_total    numeric(38,18) not null,
+  delta           numeric(38,18) not null,
+  severity        varchar(16) not null                 -- OK/SMALL/WARN/CRITICAL
+);
+create index if not exists ix_balance_recon_diff_asset on balance_recon_diff(recon_run_id, asset_id);
+
+V6__tax.sql
+-- UK-style tax accounting: Same-day -> 30-day -> Section 104 pool
+
+-- Running Section 104 pool per account+asset (average cost).
+create table if not exists tax_pool (
+  id                    bigserial primary key,
+  exchange_account_id   bigint not null references exchange_account(id),
+  asset_id              bigint not null references asset(id),
+  quantity              numeric(38,18) not null default 0,
+  cost_base             numeric(38,18) not null default 0, -- functional currency (e.g., GBP)
+  last_updated_at       timestamptz not null default now(),
+  unique (exchange_account_id, asset_id)
+);
+
+-- Optional granular acquisition lots (supports Same-day and 30-day buckets)
+create table if not exists tax_lot (
+  id                    bigserial primary key,
+  exchange_account_id   bigint not null references exchange_account(id),
+  asset_id              bigint not null references asset(id),
+  acquired_tx_id        bigint not null references tx(id),
+  acquired_at           timestamptz not null,
+  quantity_open         numeric(38,18) not null,
+  unit_cost_fc          numeric(38,18) not null,      -- functional currency per-unit cost
+  bucket                varchar(16) not null,         -- 'SAME_DAY','WITHIN_30D','POOL'
+  expires_at            timestamptz                   -- set for 30-day matching window
+);
+create index if not exists ix_tax_lot_find on tax_lot(exchange_account_id, asset_id, acquired_at);
+
+-- Disposals (SELL/CONVERT_FROM/etc.) derived from tx
+create table if not exists tax_disposal (
+  id              bigserial primary key,
+  tx_id           bigint not null references tx(id),
+  asset_id        bigint not null references asset(id),
+  disposed_qty    numeric(38,18) not null,           -- positive quantity disposed
+  proceeds_fc     numeric(38,18) not null,           -- functional currency proceeds
+  disposed_at     timestamptz not null,
+  status          varchar(16) not null default 'PENDING'  -- PENDING/MATCHED
+);
+create index if not exists ix_tax_disposal_asset_time on tax_disposal(asset_id, disposed_at);
+
+-- Matches tying a disposal to lots/pool with allocated cost & gain/loss
+create table if not exists tax_match (
+  id              bigserial primary key,
+  disposal_id     bigint not null references tax_disposal(id) on delete cascade,
+  match_type      varchar(16) not null,             -- 'SAME_DAY','WITHIN_30D','POOL'
+  lot_id          bigint references tax_lot(id),    -- null if directly from pool without discrete lot
+  matched_qty     numeric(38,18) not null,
+  cost_base_fc    numeric(38,18) not null,
+  gain_loss_fc    numeric(38,18) not null
+);
+create index if not exists ix_tax_match_disposal on tax_match(disposal_id);
+
+V7__prices_and_views.sql
+-- Price ticks for valuation and tax conversions (functional currency, e.g. GBP)
+create table if not exists price_tick (
+  id              bigserial primary key,
+  base_asset_id   bigint not null references asset(id),
+  quote_asset_id  bigint not null references asset(id),
+  price           numeric(38,18) not null,
+  as_of           timestamptz not null,
+  source          varchar(32) not null,              -- 'coingecko','binance',...
+  unique (base_asset_id, quote_asset_id, as_of, source)
+);
+create index if not exists ix_price_tick_pair_time on price_tick(base_asset_id, quote_asset_id, as_of desc);
+
+-- Flat "paired trade" VIEW (1 row per simple trade: buy+sell [+fee])
+create or replace view trade_pair as
+select
+  t.id                                    as tx_id,
+  t.exchange_account_id,
+  t.occurred_at,
+  -- BUY leg: positive BASE
+  max(case when l.leg_role='BASE'  and l.quantity > 0 then l.asset_id end)      as buy_asset_id,
+  sum(case when l.leg_role='BASE'  and l.quantity > 0 then l.quantity end)      as buy_qty,
+
+  -- SELL leg: negative QUOTE (reported as positive)
+  max(case when l.leg_role='QUOTE' and l.quantity < 0 then l.asset_id end)      as sell_asset_id,
+  sum(case when l.leg_role='QUOTE' and l.quantity < 0 then -l.quantity end)     as sell_qty,
+
+  -- indicative price (avg of unit_price_quote on BASE leg)
+  avg(case when l.leg_role='BASE' and l.quantity > 0 then l.unit_price_quote end) as price_quote,
+
+  -- fee collapsed
+  max(case when l.leg_role='FEE' then l.fee_asset_id end)                       as fee_asset_id,
+  sum(case when l.leg_role='FEE' then abs(l.fee_amount) end)                    as fee_amt
+from tx t
+join tx_leg l on l.tx_id = t.id
+where t.type = 'TRADE'
+group by t.id, t.exchange_account_id, t.occurred_at
+having
+  count(case when l.leg_role='BASE'  and l.quantity > 0 then 1 end) = 1
+  and count(case when l.leg_role='QUOTE' and l.quantity < 0 then 1 end) = 1;
+
+-- Optional: materialized view for speed (refresh after ingest).
+-- Note: for CONCURRENT refresh, a unique index is required on the MV.
+drop materialized view if exists trade_pair_mv;
+create materialized view trade_pair_mv as
+select * from trade_pair;
+
+create unique index if not exists ux_trade_pair_mv_tx on trade_pair_mv(tx_id);
+create index if not exists ix_trade_pair_mv_time on trade_pair_mv(occurred_at desc);
+create index if not exists ix_trade_pair_mv_acct_time on trade_pair_mv(exchange_account_id, occurred_at desc);
+
+Notes & options
+
+Types as enums? You can later replace varchar columns like tx.type, tx_leg.leg_role, balance_recon_run.status, tax_* buckets with Postgres enum types if you want stronger constraints. Starting with varchar keeps early migrations flexible.
+
+Numeric precision: numeric(38,18) everywhere for quantities/prices to avoid precision loss.
+
+FK cascades: Only tx_leg and other detail tables cascade on delete from their parents; top-level entities (like tx) are not auto-deleted unless you do so explicitly.
+
+Materialized view refresh: After each ingest batch, run:
+
+REFRESH MATERIALIZED VIEW CONCURRENTLY trade_pair_mv;
+
+
+(The unique index on tx_id enables CONCURRENTLY.)
