@@ -1,7 +1,7 @@
 -- H2 V1__init.sql
 
 -- 1) exchange
-create table exchange (
+create table if not exists exchange (
     id          int generated always as identity primary key,
     code        varchar(32) not null unique,
     name        varchar(128) not null
@@ -11,7 +11,7 @@ insert into exchange(code, name) values ('binance','Binance');
 insert into exchange(code, name) values ('kraken','Kraken');
 
 -- 2) exchange_account
-create table exchange_account (
+create table if not exists exchange_account (
     id              bigint generated always as identity primary key,
     exchange_id     int not null,
     account_ref     varchar(128) not null,
@@ -22,7 +22,7 @@ create table exchange_account (
 );
 
 -- 3) asset
-create table asset (
+create table if not exists asset (
     id              bigint generated always as identity primary key,
     symbol          varchar(32)  not null,
     chain           varchar(64)  not null default '',    -- normalize NULL -> ''
@@ -33,7 +33,7 @@ create table asset (
 
 
 -- 3a) asset_alias
-create table asset_alias (
+create table if not exists asset_alias (
     id              bigint generated always as identity primary key,
     exchange_id     int    not null,
     alias           varchar(64) not null,                -- store lowercase in code
@@ -44,7 +44,7 @@ create table asset_alias (
 );
 
 -- 4) balance_ingest_log (UUID as CHAR(36), JSON as CLOB)
-create table balance_ingest_log (
+create table if not exists balance_ingest_log (
     id                  char(36) default random_uuid() primary key,  -- DEFAULT before PRIMARY KEY
     exchange_account_id bigint not null,
     as_of               timestamp not null,
@@ -57,7 +57,7 @@ create table balance_ingest_log (
 create index bil_idx on balance_ingest_log(exchange_account_id, as_of desc);
 
 -- 5) balance_snapshot (compute total in queries)
-create table balance_snapshot (
+create table if not exists balance_snapshot (
     id                  bigint generated always as identity primary key,
     exchange_account_id bigint not null,
     asset_id            bigint not null,
@@ -101,7 +101,7 @@ join exchange e           on e.id  = ea.exchange_id
 join asset a              on a.id  = bs.asset_id;
 
 
-create table holding (
+create table if not exists holding (
     id        bigint generated always as identity primary key,
     asset     varchar(64)  not null,
     quantity  numeric(38,18) not null default 0,
@@ -110,7 +110,7 @@ create table holding (
 );
 create index holding_asset_idx on holding(asset);
 
-create table tax_lot (
+create table if not exists tax_lot (
     id         bigint generated always as identity primary key,
     asset      varchar(64)    not null,          -- store symbol, e.g. 'BTC'
     qty_open   numeric(38,18) not null default 0,
@@ -121,7 +121,7 @@ create table tax_lot (
 create index tax_lot_asset_idx on tax_lot(asset);
 create index tax_lot_opened_idx on tax_lot(opened_at);
 
-create table tx (
+create table if not exists tx (
     id           bigint generated always as identity primary key,
     exchange     varchar(64)   not null,
     account_ref  varchar(64),

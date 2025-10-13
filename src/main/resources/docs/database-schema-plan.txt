@@ -495,3 +495,152 @@ Provide a derived 1-row “trade_pair” (view/materialized view) for 90% of tra
 Deposits/withdrawals/rewards remain single-leg events and can be UNIONed into the same flat export.
 
 If you’d like, I can generate the exact SQL (plus Flyway migrations) for the view/materialized view and the Spring Data projections you can bind straight into your CSV/Thymeleaf.
+
+
+
+another question about our schema - some assets share the same symbol how do we handle them without ambiguity eg the following symbols are used by different assets
+EDG
+HDX
+BSX
+
+ChatGPT said:
+Thought for 15s
+
+You’re right to worry—ticker symbols aren’t globally unique. The way to stay bullet-proof is:
+
+All business logic uses asset_id (surrogate key), never raw symbols.
+
+Disambiguate at two layers:
+
+The canonical registry (asset) distinguishes assets by (symbol, chain, contract).
+
+The exchange mapping (asset_alias) distinguishes aliases by (exchange, raw_symbol, raw_chain, raw_contract).
+
+That covers cases like EDG, HDX, BSX appearing on multiple chains and being represented differently by each exchange.
+
+Below is an extra Flyway migration (V8) that tightens the model so ambiguity can’t leak in.
+
+What changes
+
+asset stays the source of truth with the existing unique (symbol, chain, contract).
+
+Native coins: contract='', chain='BTC'|'ETH'|'DOT'|....
+
+ERC-20/SPL/etc. tokens: chain='ETH'|'SOL'|..., contract = on-chain address.
+
+Fiat: use chain='' and contract='' (plus asset_type='FIAT').
+
+asset_alias becomes richer so you can map exchange quirks precisely:
+
+add raw_chain and raw_contract (both default '')
+
+move the uniqueness from (exchange_id, raw_symbol) → (exchange_id, raw_symbol, raw_chain, raw_contract).
+
+This lets you map:
+
+Kraken’s XBT → asset(symbol=BTC, chain=BTC, contract='')
+
+Binance’s ETH on ERC-20 versus ETH on an L2 bridge (if they ever differentiate)
+
+Any ERC-20 using the contract address to be 100% unambiguous.
+
+(Optional but useful) An equivalence grouping to say certain assets are “economically the same” (e.g., bridged/wrapped) if you want consolidated reporting with explicit ratios. This is advisory—your core uniqueness still relies on chain/contract.
+
+Flyway: V8__asset_alias_disambiguation.sql
+-- 1) Optional: asset_type to make intent explicit (FIAT, NATIVE, TOKEN, DERIVATIVE)
+alter table if exists asset
+  add column if not exists asset_type varchar(16) default 'TOKEN';  -- TOKEN as safe default
+-- You can later backfill: FIAT where chain='' and contract=''; NATIVE where contract='' and chain!=''
+
+-- 2) Enrich asset_alias with raw_chain and raw_contract, and strengthen uniqueness
+alter table if exists asset_alias
+  add column if not exists raw_chain varchar(64) not null default '',
+  add column if not exists raw_contract varchar(128) not null default '';
+
+-- Drop old unique constraint if present (name may differ depending on your DB)
+do $$
+declare
+  conname text;
+begin
+  select constraint_name into conname
+  from information_schema.table_constraints
+  where table_name='asset_alias'
+    and constraint_type='UNIQUE';
+  -- Drop only if it's the (exchange_id, raw_symbol) one
+  if conname is not null then
+    -- Try to drop; ignore if it's a different unique
+    begin
+      execute 'alter table asset_alias drop constraint ' || conname;
+    exception when others then
+      -- no-op
+    end;
+  end if;
+end$$;
+
+-- Re-create a precise uniqueness covering symbol+chain+contract as seen on the exchange
+create unique index if not exists ux_asset_alias_exchange_symbol_chain_contract
+  on asset_alias(exchange_id, raw_symbol, raw_chain, raw_contract);
+
+-- Helpful lookup indexes
+create index if not exists ix_asset_alias_exchange_raw_symbol
+  on asset_alias(exchange_id, raw_symbol);
+create index if not exists ix_asset_alias_asset
+  on asset_alias(asset_id);
+
+-- 3) Optional equivalence groups for wrapped/bridged assets (advisory meta)
+create table if not exists asset_equivalence_group (
+  id        bigserial primary key,
+  name      varchar(128) not null,   -- e.g., 'USDC-equivalents', 'WETH group'
+  notes     varchar(512)
+);
+
+create table if not exists asset_equivalence_member (
+  id        bigserial primary key,
+  group_id  bigint not null references asset_equivalence_group(id) on delete cascade,
+  asset_id  bigint not null references asset(id),
+  ratio     numeric(38,18) not null default 1,   -- conversion ratio vs group canonical
+  unique (group_id, asset_id)
+);
+
+-- Notes:
+-- - Keep using asset.id everywhere for FK references.
+-- - UI can display symbol + chain badge; tooltips can show contract (shortened).
+
+How you’ll use this in practice
+
+Insert canonical assets for each real thing:
+
+EDG on Polkadot native → (symbol='EDG', chain='DOT', contract='')
+
+EDG ERC-20 on Ethereum → (symbol='EDG', chain='ETH', contract='0xABC...')
+
+Similar for HDX, BSX, etc.
+
+Map exchange aliases precisely:
+
+If an exchange only exposes a ticker, store raw_symbol='EDG', raw_chain='', raw_contract=''.
+
+If it exposes chain/contract (or you know it from their docs), fill raw_chain/raw_contract too.
+
+Either way, the unique constraint allows the same raw_symbol more than once as long as chain/contract differ.
+
+Ledger & prices: continue to use asset_id keys (not symbols) in tx_leg, price_tick, etc. Your valuations and tax logic remain unambiguous.
+
+UI/Exports:
+
+Prefer showing SYMBOL [CHAIN] (e.g., EDG [ETH] vs EDG [DOT]).
+
+Provide a “copy contract” button when a token has a contract.
+
+When importing CSVs, allow the user to select chain/contract if a symbol is ambiguous; store the selection by creating a matching asset_alias.
+
+Why this solves EDG / HDX / BSX
+
+Those tickers can exist on multiple chains and multiple projects. With:
+
+Canonical asset(symbol, chain, contract) uniqueness, and
+
+Exchange-level alias uniqueness on (exchange, raw_symbol, raw_chain, raw_contract)
+
+…you never rely on a bare symbol to identify an asset, so ambiguity can’t creep into balances, trades, tax lots, or prices.
+
