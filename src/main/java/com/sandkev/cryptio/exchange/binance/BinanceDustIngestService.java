@@ -1,0 +1,93 @@
+package com.sandkev.cryptio.exchange.binance;
+
+// src/main/java/com/sandkev/cryptio/binance/BinanceDustIngestService.java
+//package com.sandkev.cryptio.binance;
+
+import com.sandkev.cryptio.ingest.IngestCheckpointDao;
+import com.sandkev.cryptio.balance.BinanceSignedClient;
+import com.sandkev.cryptio.tx.TxUpserter;
+import org.springframework.stereotype.Service;
+
+import java.math.BigDecimal;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+@Service
+public class BinanceDustIngestService {
+
+    private final BinanceSignedClient client;
+    private final IngestCheckpointDao ckpt;
+    private final TxUpserter tx;
+
+    public BinanceDustIngestService(BinanceSignedClient client, IngestCheckpointDao ckpt, TxUpserter tx) {
+        this.client = client; this.ckpt = ckpt; this.tx = tx;
+    }
+
+    public int ingest(String accountRef, Instant sinceInclusive) {
+//        final long startMs = effectiveStartMs("dust", sinceInclusive);
+        long startMs = sinceInclusive != null ? sinceInclusive.toEpochMilli() :
+                ckpt.get("binance", accountRef, "dust").map(Instant::toEpochMilli).orElse(0L);
+
+        int inserted = 0;
+        long pageStart = startMs;
+        for (int page=0; page<50; page++) {
+            var p = new LinkedHashMap<String,String>();
+            p.put("startTime", String.valueOf(pageStart));
+            p.put("endTime", String.valueOf(System.currentTimeMillis()));
+            String path = client.signedGetPath("/sapi/v1/asset/dribblet", p);
+
+            @SuppressWarnings("unchecked")
+            Map<String,Object> resp = client.getJson(path, Map.class);
+
+            List<Map<String,Object>> dribs = (List<Map<String,Object>>) resp.getOrDefault("userAssetDribblets", List.of());
+            if (dribs.isEmpty()) break;
+
+            long maxTs = pageStart;
+            for (var d : dribs) {
+                long operateTime = ((Number)d.get("operateTime")).longValue();
+                @SuppressWarnings("unchecked")
+                List<Map<String,Object>> items =
+                        (List<Map<String,Object>>) d.getOrDefault("userAssetDribbletDetails", List.of());
+                for (var it : items) {
+                    String transId = String.valueOf(it.get("transId"));
+                    String fromAsset = String.valueOf(it.get("fromAsset"));
+                    BigDecimal amount = new BigDecimal(String.valueOf(it.getOrDefault("amount","0")));
+                    BigDecimal bnbReceived = new BigDecimal(String.valueOf(it.getOrDefault("transferedAmount","0")));
+                    BigDecimal bnbFee = new BigDecimal(String.valueOf(it.getOrDefault("serviceChargeAmount","0")));
+
+                    Instant ts = Instant.ofEpochMilli(operateTime);
+
+                    // OUT: reduce fromAsset
+                    tx.upsert("binance", accountRef, fromAsset, "N/A", "CONVERT_OUT",
+                            amount, null, null, null, ts, "dust:out:" + fromAsset + ":" + transId);
+
+                    // IN: increase BNB, fee in BNB
+                    tx.upsert("binance", accountRef, "BNB", "N/A", "CONVERT_IN",
+                            bnbReceived, null, bnbFee, "BNB", ts, "dust:in:BNB:" + transId);
+
+                    inserted += 2;
+                }
+                maxTs = Math.max(maxTs, operateTime);
+            }
+
+            //ckpt.saveSince("binance"+".dust", Instant.ofEpochMilli(maxTs).toEpochMilli() + 1);
+            ckpt.put("binance", accountRef, "dust", Instant.ofEpochMilli(maxTs), null);
+            if (maxTs <= pageStart) break;
+            pageStart = maxTs + 1;
+        }
+        return inserted;
+    }
+    private long effectiveStartMs(String kind, Instant sinceInclusive) {
+        long ck = ckpt.getSince("binance"+ "." + kind).orElse(0L);
+        long si = sinceInclusive != null ? sinceInclusive.toEpochMilli() : 0L;
+        long start = Math.max(ck, si);
+        if (start == 0L) start = System.currentTimeMillis() - Duration.ofDays(90).toMillis() + 1;
+        return start;
+        // (If you want “prefer since unless checkpoint is newer”, this already does it.)
+    }
+
+}
+

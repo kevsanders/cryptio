@@ -1,6 +1,6 @@
 package com.sandkev.cryptio.domain;
 
-import com.sandkev.cryptio.TxRepo;
+import com.sandkev.cryptio.tx.TxRepo;
 import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;

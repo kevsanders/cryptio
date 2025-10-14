@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="en">
+<head th:replace="fragments/layout :: head('Reconcile')"></head>
+<body>
+<header th:replace="fragments/layout :: header('reconcile')"></header>
+<main class="container">
+
+    <form class="bar" method="get" action="/reconcile">
+        <label>Account</label><input name="account" th:value="${account}" placeholder="primary"/>
+        <label>Platform</label>
+        <select name="platform" th:value="${platform}">
+            <option value="binance" th:selected="${platform=='binance'}">Binance</option>
+            <option value="kraken" th:selected="${platform=='kraken'}">Kraken</option>
+        </select>
+        <label>Min |Δ|</label><input type="number" step="0.00000001" name="minAbsDelta" th:value="${minAbsDelta}"/>
+        <label>Sort</label>
+        <select name="sort" th:value="${sort}">
+            <option value="deltaDesc" th:selected="${sort=='deltaDesc'}">By |Δ| desc</option>
+            <option value="assetAsc" th:selected="${sort=='assetAsc'}">By asset A→Z</option>
+        </select>
+        <button type="submit">Apply</button>
+        <a class="btn" th:href="@{'/dashboard'(account=${account})}">← Dashboard</a>
+    </form>
+
+    <div class="bar">
+        <span class="pill">Snapshot Σ: <strong th:text="${#numbers.formatDecimal(totalSnapshot,1,8)}">0</strong></span>
+        <span class="pill">Tx Σ: <strong th:text="${#numbers.formatDecimal(totalTx,1,8)}">0</strong></span>
+        <span class="pill">Σ |Δ|: <strong th:text="${#numbers.formatDecimal(totalAbsDelta,1,8)}">0</strong></span>
+    </div>
+
+    <section class="card">
+        <h2>Reconciliation</h2>
+        <div class="content">
+            <table>
+                <thead><tr><th>Asset</th><th class="right">Snapshot</th><th class="right">Tx-derived</th><th class="right">Δ (Snap − Tx)</th></tr></thead>
+                <tbody>
+                <tr th:each="l : ${lines}">
+                    <td>
+                        <span th:text="${l.asset()}">BTC</span>
+                        <a class="btn" style="margin-left:8px" th:href="@{'/tx'(exchange=${platform}, account=${account}, asset=${l.asset()})}">Tx</a>
+                    </td>
+                    <td class="right" th:text="${#numbers.formatDecimal(l.fromSnapshot(),1,8)}">0.00000000</td>
+                    <td class="right" th:text="${#numbers.formatDecimal(l.fromTx(),1,8)}">0.00000000</td>
+                    <td class="right" th:classappend="${l.delta().signum() >= 0} ? 'delta-pos' : 'delta-neg'"
+                        th:text="${#numbers.formatDecimal(l.delta(),1,8)}">0.00000000</td>
+                </tr>
+                <tr th:if="${#lists.isEmpty(lines)}"><td colspan="4" class="muted">No rows — ingest history or adjust filters.</td></tr>
+                </tbody>
+            </table>
+            <p class="muted" style="margin-top:10px">
+                Tx-derived = net(BUY, DEPOSIT, CONVERT_IN, REWARD) − net(SELL, WITHDRAW, CONVERT_OUT) − Σ fees (by fee asset).
+            </p>
+        </div>
+    </section>
+</main>
+<footer th:replace="fragments/layout :: footer"></footer>
+</body>
+</html>

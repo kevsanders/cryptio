@@ -1,6 +1,7 @@
 // src/test/java/com/sandkev/cryptio/kraken/KrakenSymbolMapperTest.java
 package com.sandkev.cryptio.kraken;
 
+import com.sandkev.cryptio.exchange.kraken.KrakenSymbolMapper;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
