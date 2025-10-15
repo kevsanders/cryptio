@@ -1,7 +1,6 @@
 package com.sandkev.cryptio.balance;
 
-import com.sandkev.cryptio.config.BinanceSpotConfig;
-import com.sandkev.cryptio.config.BinanceSpotProperties;
+import com.sandkev.cryptio.config.BinanceClientConfig;
 import org.junit.jupiter.api.*;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -36,12 +35,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 @ActiveProfiles("test")
 @SpringBootTest(
         classes = {
-                BinanceSpotConfig.class,
+                BinanceClientConfig.class,
                 BinanceSpotPositionsService.class
         },
         webEnvironment = SpringBootTest.WebEnvironment.NONE
 )
-@EnableConfigurationProperties(BinanceSpotProperties.class)
+@EnableConfigurationProperties(BinanceClientConfig.BinanceClientProperties.class)
 @TestPropertySource(properties = {
         "binance.spot.base-url=${BINANCE_BASE_URL:https://api.binance.com}",
         "binance.spot.api-key=${BINANCE_API_KEY:}",
@@ -55,7 +54,7 @@ class BinanceSpotPositionsServiceE2ETest {
     BinanceSpotPositionsService svc;
 
     @Autowired
-    BinanceSpotProperties props;
+    BinanceClientConfig.BinanceClientProperties props;
 
     @BeforeEach
     void requireKeys() {
@@ -69,7 +68,7 @@ class BinanceSpotPositionsServiceE2ETest {
     @Test
     void fetchSpotBalances_live_succeeds_and_returns_map() {
         try {
-            Map<String, BigDecimal> balances = svc.fetchSpotBalances();
+            Map<String, BigDecimal> balances = svc.fetchSpotBalancesFromAccount();
 
             for (Map.Entry<String, BigDecimal> entry : balances.entrySet()) {
                 System.out.println(entry);

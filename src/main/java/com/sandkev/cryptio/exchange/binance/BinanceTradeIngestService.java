@@ -2,10 +2,10 @@ package com.sandkev.cryptio.exchange.binance;
 // src/main/java/com/sandkev/cryptio/binance/BinanceTradeIngestService.java
 //package com.sandkev.cryptio.binance;
 
-import com.sandkev.cryptio.config.BinanceSpotProperties;
+import com.sandkev.cryptio.config.BinanceClientConfig;
 import com.sandkev.cryptio.ingest.IngestCheckpointDao;
 import com.sandkev.cryptio.portfolio.AssetUniverseDao;
-import com.sandkev.cryptio.balance.BinanceSignedClient;
+import com.sandkev.cryptio.balance.BinanceSignedClientImpl;
 import com.sandkev.cryptio.tx.TxUpserter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -30,8 +30,8 @@ import java.util.*;
 @Slf4j
 public class BinanceTradeIngestService {
 
-    private final BinanceSignedClient binanceClient;              // from BinanceSpotConfig
-    private final BinanceSpotProperties props; // has apiKey/secret/timeout
+    private final BinanceSignedClientImpl binanceClient;              // from BinanceSpotConfig
+    private final BinanceClientConfig.BinanceClientProperties props; // has apiKey/secret/timeout
     private final JdbcTemplate jdbc;
     private final TxUpserter writer;
     private final AssetUniverseDao assetsDao;
@@ -39,11 +39,11 @@ public class BinanceTradeIngestService {
     private final IngestCheckpointDao ckpt;
 
 
-    private static final ParameterizedTypeReference<List<Map<String,Object>>> LIST_OF_MAP =
+    static final ParameterizedTypeReference<List<Map<String,Object>>> LIST_OF_MAP =
             new ParameterizedTypeReference<>() {};
 
 
-    public BinanceTradeIngestService(@Qualifier("binanceSignedClient") BinanceSignedClient binanceClient, BinanceSpotProperties props,
+    public BinanceTradeIngestService(@Qualifier("binanceSignedClient") BinanceSignedClientImpl binanceClient, BinanceClientConfig.BinanceClientProperties props,
                                      JdbcTemplate jdbc, TxUpserter writer, AssetUniverseDao assetsDao,
                                      BinanceSymbolMapper symbolMapper,
                                      IngestCheckpointDao ckpt) {

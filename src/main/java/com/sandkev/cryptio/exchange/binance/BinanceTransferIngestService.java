@@ -4,7 +4,7 @@ package com.sandkev.cryptio.exchange.binance;
 //package com.sandkev.cryptio.binance;
 
 import com.sandkev.cryptio.ingest.IngestCheckpointDao;
-import com.sandkev.cryptio.balance.BinanceSignedClient;
+import com.sandkev.cryptio.balance.BinanceSignedClientImpl;
 import com.sandkev.cryptio.tx.TxUpserter;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -25,17 +25,17 @@ public class BinanceTransferIngestService {
 
     private static final ParameterizedTypeReference<List<Map<String,Object>>> LIST_OF_MAP =
             new ParameterizedTypeReference<>() {};
-    private final BinanceSignedClient client;
+    private final BinanceSignedClientImpl client;
     private final TxUpserter tx;
     private final IngestCheckpointDao ckpt;
     private final JdbcTemplate jdbc;
 
 
-    public BinanceTransferIngestService(BinanceSignedClient binanceSignedClient,
+    public BinanceTransferIngestService(BinanceSignedClientImpl binanceSignedClientImpl,
                                         TxUpserter tx,
                                         IngestCheckpointDao ckpt,
                                         JdbcTemplate jdbc) {
-        this.client = binanceSignedClient;
+        this.client = binanceSignedClientImpl;
         this.tx = tx;
         this.ckpt = ckpt;
         this.jdbc = jdbc;

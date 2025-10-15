@@ -3,8 +3,9 @@ package com.sandkev.cryptio.exchange.binance;
 // src/main/java/com/sandkev/cryptio/binance/BinanceRewardsIngestService.java
 //package com.sandkev.cryptio.binance;
 
-import com.sandkev.cryptio.ingest.IngestCheckpointDao;
 import com.sandkev.cryptio.balance.BinanceSignedClient;
+import com.sandkev.cryptio.ingest.IngestCheckpointDao;
+import com.sandkev.cryptio.balance.BinanceSignedClientImpl;
 import com.sandkev.cryptio.tx.TxUpserter;
 import org.springframework.stereotype.Service;
 
@@ -14,6 +15,8 @@ import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+
+import static com.sandkev.cryptio.exchange.binance.BinanceDustIngestService.MAP_OF_STRING_OBJECT;
 
 @Service
 public class BinanceRewardsIngestService {
@@ -36,18 +39,16 @@ public class BinanceRewardsIngestService {
         for (int page=0; page<200; page++) {
             // Binance caps limit at 500 and window at 180 days
             long endMs = Math.min(System.currentTimeMillis(), pageStart + 180L*24*60*60*1000);
-            var p = new LinkedHashMap<String,String>();
+            var p = new LinkedHashMap<String,Object>();
             p.put("startTime", String.valueOf(pageStart));
             p.put("endTime", String.valueOf(endMs));
             p.put("limit", "500");
 
-            String path = client.signedGetPath("/sapi/v1/asset/assetDividend", p);
+
+            Map<String, Object> root = client.get("/sapi/v1/asset/assetDividend", p, MAP_OF_STRING_OBJECT);
 
             @SuppressWarnings("unchecked")
-            Map<String,Object> resp = client.getJson(path, Map.class);
-
-            @SuppressWarnings("unchecked")
-            List<Map<String,Object>> rows = (List<Map<String,Object>>) resp.getOrDefault("rows", List.of());
+            List<Map<String, Object>> rows = (List<Map<String, Object>>) root.getOrDefault("rows", List.of());
             if (rows.isEmpty()) break;
 
             long maxTs = pageStart;

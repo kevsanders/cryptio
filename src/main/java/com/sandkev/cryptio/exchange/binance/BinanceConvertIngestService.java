@@ -4,8 +4,9 @@ package com.sandkev.cryptio.exchange.binance;
 //package com.sandkev.cryptio.binance;
 
 import com.sandkev.cryptio.ingest.IngestCheckpointDao;
-import com.sandkev.cryptio.balance.BinanceSignedClient;
+import com.sandkev.cryptio.balance.BinanceSignedClientImpl;
 import com.sandkev.cryptio.tx.TxUpserter;
+import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
@@ -18,11 +19,13 @@ import java.util.Map;
 @Service
 public class BinanceConvertIngestService {
 
-    private final BinanceSignedClient client;
+    private static final ParameterizedTypeReference<Map<String,Object>> MAP_OF_STRING_OBJECT =
+            new ParameterizedTypeReference<>() {};
+    private final BinanceSignedClientImpl client;
     private final IngestCheckpointDao ckpt;
     private final TxUpserter tx;
 
-    public BinanceConvertIngestService(BinanceSignedClient client, IngestCheckpointDao ckpt, TxUpserter tx) {
+    public BinanceConvertIngestService(BinanceSignedClientImpl client, IngestCheckpointDao ckpt, TxUpserter tx) {
         this.client = client; this.ckpt = ckpt; this.tx = tx;
     }
 
@@ -34,16 +37,15 @@ public class BinanceConvertIngestService {
         int inserted = 0;
         long pageStart = startMs;
         for (int page=0; page<200; page++) {
-            var p = new LinkedHashMap<String,String>();
+            var p = new LinkedHashMap<String,Object>();
             p.put("startTime", String.valueOf(pageStart));
             p.put("endTime", String.valueOf(System.currentTimeMillis()));
-            String path = client.signedGetPath("/sapi/v1/convert/tradeFlow", p);
+
+            // Top-level OBJECT, not array
+            Map<String, Object> root = client.get("/sapi/v1/convert/tradeFlow", p, MAP_OF_STRING_OBJECT);
 
             @SuppressWarnings("unchecked")
-            Map<String,Object> resp = client.getJson(path, Map.class);
-
-            @SuppressWarnings("unchecked")
-            List<Map<String,Object>> rows = (List<Map<String,Object>>) resp.getOrDefault("rows", List.of());
+            List<Map<String, Object>> rows = (List<Map<String, Object>>) root.getOrDefault("rows", List.of());
             if (rows == null || rows.isEmpty()) break;
 
             long maxTs = pageStart;
