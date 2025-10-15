@@ -173,6 +173,7 @@ public class BinanceTradeIngestService {
                 // nothing more for this symbol
                 break;
             }
+            log.info("saving {} rows of trades", trades.size());
 
             long maxTime = startMs;
             long lastSeenId = -1L;

@@ -3,17 +3,17 @@ package com.sandkev.cryptio.exchange.binance;
 import com.sandkev.cryptio.balance.BinanceSignedClient;
 import com.sandkev.cryptio.ingest.IngestCheckpointDao;
 import com.sandkev.cryptio.tx.TxUpserter;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
-import java.time.Duration;
-import java.time.Instant;
+import java.time.*;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ThreadLocalRandom;
 
+@Slf4j
 @Service
 public class BinanceConvertIngestService {
     private static final ParameterizedTypeReference<Map<String,Object>> MAP_OF_STRING_OBJECT =
@@ -21,8 +21,9 @@ public class BinanceConvertIngestService {
 
     // try shorter windows to reduce weight spikes
     private static final long WINDOW_MS = java.time.Duration.ofDays(45).toMillis();
+    public static final long TRADE_HISTORY_START = LocalDate.of(2017, 10, 1).atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli();
 
-    private final BinanceSignedClient client;   // interface, not impl
+    private final BinanceSignedClient client;
     private final IngestCheckpointDao ckpt;
     private final TxUpserter tx;
 
@@ -37,6 +38,7 @@ public class BinanceConvertIngestService {
     public int ingest(String accountRef, Instant sinceInclusive) {
         long startMs = sinceInclusive != null ? sinceInclusive.toEpochMilli()
                 : ckpt.get("binance", accountRef, "convert").map(Instant::toEpochMilli).orElse(0L);
+        startMs = Math.max(startMs, TRADE_HISTORY_START);//not before earliest possible start date
 
         int inserted = 0;
         long pageStart = startMs;
@@ -51,6 +53,9 @@ public class BinanceConvertIngestService {
             // If supported by the endpoint; if not, remove
             p.put("limit", 1000);
 
+            //binance limits to 1 request every 2 seconds
+            log.info("pausing before making request {}", LocalDateTime.ofInstant(Instant.ofEpochMilli(pageStart), ZoneOffset.UTC));
+            sleepQuietly(2000);
             Map<String, Object> root = client.get("/sapi/v1/convert/tradeFlow", p, MAP_OF_STRING_OBJECT);
 
             @SuppressWarnings("unchecked")
@@ -60,6 +65,7 @@ public class BinanceConvertIngestService {
                 sleepQuietly(250);
                 continue;
             }
+            log.info("saving {} rows of converts", rows.size());
 
             long maxTs = pageStart;
             for (var r : rows) {

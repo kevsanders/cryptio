@@ -89,6 +89,7 @@ public class BinanceSignedClientImpl implements BinanceSignedClient {
 
     private  <T> T doSignedGet(String path, Map<String,Object> params, ParameterizedTypeReference<T> type) {
         var qp = sign(params);
+        log.info("query binance: {} / {}", path, params);
         return client.get()
                 .uri(uri -> uri.path(path).queryParams(qp).build())
                 .retrieve()

@@ -1,12 +1,14 @@
 package com.sandkev.cryptio.balance;
 
 import com.sandkev.cryptio.exchange.kraken.KrakenSpotPositionsService;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.util.Map;
 
+@Slf4j
 @Service
 public class BalanceIngestService {
     private final JdbcTemplate jdbc;
@@ -50,6 +52,7 @@ public class BalanceIngestService {
 
         var asOf = java.sql.Timestamp.from(java.time.Instant.now());
 
+        log.info("saving {} rows of balances", balances.size());
         for (var e : balances.entrySet()) {
             String symbol = e.getKey();
             java.math.BigDecimal total = e.getValue();

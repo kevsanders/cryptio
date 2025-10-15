@@ -3,6 +3,7 @@ package com.sandkev.cryptio.exchange.binance;
 import com.sandkev.cryptio.balance.BinanceSignedClient;
 import com.sandkev.cryptio.ingest.IngestCheckpointDao;
 import com.sandkev.cryptio.tx.TxUpserter;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.stereotype.Service;
 
@@ -14,6 +15,7 @@ import java.util.List;
 import java.util.Map;
 
 @Service
+@Slf4j
 public class BinanceRewardsIngestService {
 
     private static final ParameterizedTypeReference<Map<String, Object>> MAP_OF_STRING_OBJECT =
@@ -67,6 +69,7 @@ public class BinanceRewardsIngestService {
                 windowStart = windowEnd + 1;
                 continue;
             }
+            log.info("saving {} rows of rewards", rows.size());
 
             long maxTs = windowStart;
 

@@ -4,6 +4,7 @@ package com.sandkev.cryptio.exchange.binance;
 import com.sandkev.cryptio.balance.BinanceSignedClientImpl;
 import com.sandkev.cryptio.ingest.IngestCheckpointDao;
 import com.sandkev.cryptio.tx.TxUpserter;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.stereotype.Service;
 
@@ -14,6 +15,7 @@ import java.util.List;
 import java.util.Map;
 
 @Service
+@Slf4j
 public class BinanceDustIngestService {
 
     static final ParameterizedTypeReference<Map<String,Object>> MAP_OF_STRING_OBJECT =
@@ -45,6 +47,7 @@ public class BinanceDustIngestService {
             @SuppressWarnings("unchecked")
             List<Map<String, Object>> dribs = (List<Map<String, Object>>) root.getOrDefault("userAssetDribblets", List.of());
             if (dribs.isEmpty()) break;
+            log.info("saving {} rows of dust", dribs.size());
 
             long maxTs = pageStart;
             for (var d : dribs) {

@@ -6,6 +6,7 @@ package com.sandkev.cryptio.exchange.binance;
 import com.sandkev.cryptio.ingest.IngestCheckpointDao;
 import com.sandkev.cryptio.balance.BinanceSignedClientImpl;
 import com.sandkev.cryptio.tx.TxUpserter;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -18,6 +19,7 @@ import java.util.List;
 import java.util.Map;
 
 @Service
+@Slf4j
 public class BinanceTransferIngestService {
 
     private static final String EXCHANGE = "binance";
@@ -70,6 +72,7 @@ public class BinanceTransferIngestService {
                 windowStart = windowEnd + 1;
                 continue;
             }
+            log.info("saving {} rows of deposits", rows.size());
 
             long maxTs = windowStart;
 
@@ -148,6 +151,7 @@ public class BinanceTransferIngestService {
                 windowStart = windowEnd + 1;
                 continue;
             }
+            log.info("saving {} rows of withdrawals", rows.size());
 
             long maxTs = windowStart;
 
