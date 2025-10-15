@@ -1,8 +1,5 @@
 package com.sandkev.cryptio.exchange.binance;
 
-// src/main/java/com/sandkev/cryptio/binance/BinanceRewardsIngestService.java
-//package com.sandkev.cryptio.binance;
-
 import com.sandkev.cryptio.balance.BinanceSignedClient;
 import com.sandkev.cryptio.ingest.IngestCheckpointDao;
 import com.sandkev.cryptio.balance.BinanceSignedClientImpl;
