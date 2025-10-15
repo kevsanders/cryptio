@@ -1,16 +1,13 @@
-// src/main/java/com/sandkev/cryptio/binance/BinanceOtherIngestService.java
 package com.sandkev.cryptio.exchange.binance;
 
+import lombok.Value;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
 
-/**
- * Facade over specific Binance ingestion services.
- * Keeps backward compatibility with existing callers that referenced
- * BinanceOtherIngestService while the real logic lives in small, focused classes.
- */
+@Slf4j
 @Service
 public class BinanceOtherIngestService {
 
@@ -41,12 +38,60 @@ public class BinanceOtherIngestService {
         return rewards.ingest(accountRef, sinceInclusive);
     }
 
-    /** Convenience: run all three using the same 'since' (or checkpoint when null). */
+    /** Run all three using the same 'since' (or per-service checkpoint when null). */
     public int ingestAll(String accountRef, @Nullable Instant sinceInclusive) {
-        int n = 0;
-        n += ingestDust(accountRef, sinceInclusive);
-        n += ingestConvertTrades(accountRef, sinceInclusive);
-        n += ingestRewards(accountRef, sinceInclusive);
-        return n;
+        return ingestAllDetailed(accountRef, sinceInclusive).total();
+    }
+
+    /** Same as ingestAll but returns a breakdown. */
+    public Result ingestAllDetailed(String accountRef, @Nullable Instant sinceInclusive) {
+        log.info("Binance ingest-all start accountRef={}, since={}", accountRef, sinceInclusive);
+
+        int dustCount = 0, convertCount = 0, rewardsCount = 0;
+
+        // Run dust (isolated)
+        try {
+            dustCount = ingestDust(accountRef, sinceInclusive);
+            log.info("Binance dust ingested: {}", dustCount);
+        } catch (Exception e) {
+            log.warn("Binance dust ingest failed: {}", e.getMessage(), e);
+        }
+
+        // tiny pacing to reduce 429 bursts (optional)
+        sleepQuietly(200);
+
+        // Run convert (isolated)
+        try {
+            convertCount = ingestConvertTrades(accountRef, sinceInclusive);
+            log.info("Binance convert ingested: {}", convertCount);
+        } catch (Exception e) {
+            log.warn("Binance convert ingest failed: {}", e.getMessage(), e);
+        }
+
+        sleepQuietly(200);
+
+        // Run rewards (isolated)
+        try {
+            rewardsCount = ingestRewards(accountRef, sinceInclusive);
+            log.info("Binance rewards ingested: {}", rewardsCount);
+        } catch (Exception e) {
+            log.warn("Binance rewards ingest failed: {}", e.getMessage(), e);
+        }
+
+        var result = new Result(dustCount, convertCount, rewardsCount);
+        log.info("Binance ingest-all done accountRef={}, total={}, breakdown={}", accountRef, result.total(), result);
+        return result;
+    }
+
+    private static void sleepQuietly(long ms) {
+        try { Thread.sleep(ms); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+    }
+
+    @Value
+    public static class Result {
+        int dust;
+        int convert;
+        int rewards;
+        public int total() { return dust + convert + rewards; }
     }
 }
