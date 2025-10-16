@@ -26,7 +26,8 @@
             <div class="content">
                 <table>
                     <thead>
-                    <tr><th>Platform</th><th class="right">Value ([[${vs?.toUpperCase()}]])</th></tr>
+                    <th>Platform</th>
+                    <th class="right">Value (<span th:text="${vs?.toUpperCase()}">GBP</span>)</th>
                     </thead>
                     <tbody>
                     <tr th:each="p : ${platformTotals}">
@@ -48,9 +49,7 @@
             <div class="content">
                 <div class="grid g2">
                     <div class="pie-wrap">
-                        <!-- Simple canvas pie fed by inline data -->
-                        <canvas id="pie" width="380" height="380"
-                                th:attr="data-labels=${pieLabels}, data-values=${pieValues}"></canvas>
+                        <canvas id="pie" width="380" height="380"></canvas>
                     </div>
                     <div>
                         <table>
@@ -67,7 +66,6 @@
                 </div>
             </div>
         </section>
-    </div>
 
     <!-- Ingest buttons -->
     <section class="card" style="margin-top:16px">
@@ -86,21 +84,41 @@
 </main>
 <footer th:replace="fragments/layout :: footer"></footer>
 
-<script>
-  (function(){
-    const el = document.getElementById('pie'); if(!el) return;
-    const labels = JSON.parse(el.dataset.labels || '[]');
-    const values = JSON.parse(el.dataset.values || '[]');
-    // lightweight pie without libs
-    const ctx = el.getContext('2d');
-    const total = values.reduce((a,b)=>a+b,0) || 1; let start=0;
-    for(let i=0;i<values.length;i++){
-      const slice = (values[i]/total)*Math.PI*2;
-      ctx.beginPath(); ctx.moveTo(190,190);
-      ctx.arc(190,190,180,start,start+slice); ctx.closePath(); ctx.fill();
-      start += slice;
+<!-- Ensure Chart.js is loaded once (v4) -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<!-- Inline the arrays as proper JS literals -->
+<script th:inline="javascript">
+/*<![CDATA[*/
+const pieLabels = /*[[${pieLabels}]]*/ [];     // e.g. ["BTC","ETH","OTHER"]
+const pieValuesRaw = /*[[${pieValues}]]*/ [];  // e.g. [1234.56, 789.01, 23.45]
+const pieValues = pieValuesRaw.map(Number);    // ensure numbers
+
+const ctx = document.getElementById('pie');
+if (ctx && pieLabels.length && pieValues.length) {
+  new Chart(ctx, {
+    type: 'pie',
+    data: {
+      labels: pieLabels,
+      datasets: [{
+        label: 'Portfolio share',
+        data: pieValues
+      }]
+    },
+    options: {
+      responsive: true,
+      plugins: {
+        legend: { position: 'bottom' },
+        tooltip: {
+          callbacks: {
+            label: (item) => `${item.label}: ${Number(item.raw).toLocaleString(undefined, {maximumFractionDigits: 2})}`
+          }
+        }
+      }
     }
-  }());
+  });
+}
+/*]]>*/
 </script>
 </body>
 </html>

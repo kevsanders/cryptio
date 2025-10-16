@@ -219,13 +219,22 @@ public class PortfolioValuationService {
             Map.entry("XRP", "ripple"),
             Map.entry("SOL", "solana"),
             Map.entry("LTC", "litecoin"),
+            Map.entry("RUNE", "thorchain"),
             Map.entry("LINK", "chainlink"),
             Map.entry("DOT", "polkadot"),
             Map.entry("AVAX", "avalanche-2"),
             Map.entry("LUNA", "terra-luna"),
             Map.entry("LUNC", "terra-luna-classic"),
             Map.entry("MATIC", "matic-network"),
-            Map.entry("POL", "polygon-ecosystem-token")
+            Map.entry("POL", "polygon-ecosystem-token"),
+            Map.entry("GLMR", "moonbeam"),
+            Map.entry("HDX", "hydradx"),
+            Map.entry("KSM", "kusama"),
+            Map.entry("SUPER", "superfarm"),       // SuperFarm
+            Map.entry("THETA", "theta-token"),
+            Map.entry("USD", "usd-coin"),          // treat as USD stablecoin
+            Map.entry("WELL", "moonwell-artemis"), // Moonwell (WELL)
+            Map.entry("MOVR", "moonriver")
             // …extend as needed
     );
 
