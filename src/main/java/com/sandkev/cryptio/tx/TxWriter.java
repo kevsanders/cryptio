@@ -4,6 +4,6 @@ package com.sandkev.cryptio.tx;
 import com.sandkev.cryptio.domain.Tx;
 
 public interface TxWriter {
-    void write(Tx tx);
+    int write(Tx tx);
 
 }

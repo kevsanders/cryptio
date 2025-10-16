@@ -1,4 +1,4 @@
-package com.sandkev.cryptio.binance.testsupport;
+package com.sandkev.cryptio.exchange.binance.testsupport;
 
 import com.sandkev.cryptio.ingest.IngestCheckpointDao;
 

@@ -1,0 +1,4 @@
+[
+  {"id":"w1","coin":"ETH","amount":"0.1","transactionFee":"0.0005","applyTime":"2023-10-10 12:30:00"},
+  {"id":"w2","coin":"USDT","amount":"100","transactionFee":"1.5","applyTime":"1700005000000"}
+]

@@ -1,3 +1,14 @@
 /gradlew text eol=lf
 *.bat text eol=crlf
 *.jar binary
+*        text=auto eol=lf
+# Common binary types
+*.png    binary
+*.jpg    binary
+*.gif    binary
+*.pdf    binary
+*.zip    binary
+*.jar    binary
+
+*.sh     text eol=lf
+*.java   text eol=lf

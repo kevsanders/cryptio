@@ -1,0 +1,10 @@
+{
+  "userAssetDribblets": [
+    {
+      "operateTime": 1700002000000,
+      "userAssetDribbletDetails": [
+        {"transId":"a1","fromAsset":"FOO","amount":"12.34","transferedAmount":"0.001","serviceChargeAmount":"0.00001"}
+      ]
+    }
+  ]
+}

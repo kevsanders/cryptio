@@ -1,16 +1,14 @@
-// src/main/java/com/sandkev/cryptio/web/DashboardController.java
 package com.sandkev.cryptio.dashboard.web;
 
+import com.sandkev.cryptio.exchange.binance.BinanceCompositeIngestService;
 import com.sandkev.cryptio.portfolio.PortfolioValuationService;
-import com.sandkev.cryptio.exchange.binance.BinanceOtherIngestService;
-import com.sandkev.cryptio.exchange.binance.BinanceTradeIngestService;
-import com.sandkev.cryptio.exchange.binance.BinanceTransferIngestService;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -19,63 +17,60 @@ import java.time.Instant;
 public class DashboardController {
 
     private final PortfolioValuationService valuation;
-    private final BinanceOtherIngestService binanceOther;
-    private final BinanceTradeIngestService binanceTrades;
-    private final BinanceTransferIngestService binanceTransfers;
+    private final BinanceCompositeIngestService binance;
 
     public DashboardController(PortfolioValuationService valuation,
-                               BinanceOtherIngestService binanceOther,
-                               BinanceTradeIngestService binanceTrades,
-                               BinanceTransferIngestService binanceTransfers) {
+                               BinanceCompositeIngestService binance) {
         this.valuation = valuation;
-        this.binanceOther = binanceOther;
-        this.binanceTrades = binanceTrades;
-        this.binanceTransfers = binanceTransfers;
+        this.binance = binance;
     }
 
     @GetMapping("/")
-    public String rootRedirect() {
-        return "redirect:/dashboard";
-    }
+    public String rootRedirect() { return "redirect:/dashboard"; }
 
     @GetMapping("/dashboard")
     public String dashboard(@RequestParam(defaultValue = "primary") String account,
                             @RequestParam(defaultValue = "gbp") String vs,
                             Model model) {
 
-        var totals = valuation.platformTotals(account, vs); // List<PlatformTotal{platform,value}>
+        var totals = valuation.platformTotals(account, vs);
         BigDecimal grand = totals.stream().map(t -> t.value()).reduce(BigDecimal.ZERO, BigDecimal::add);
 
-        var top = valuation.topTokens(account, vs, /*limit*/12, /*minPct*/0.01); // List<TokenSlice{asset,value}
-        var pie = valuation.pieData(account, vs, /*minPct*/0.02); // returns (labels, values)
+        var top = valuation.topTokens(account, vs, 12, 0.01);
+        var pie = valuation.pieData(account, vs, 0.02);
 
         model.addAttribute("account", account);
         model.addAttribute("vs", vs);
         model.addAttribute("platformTotals", totals);
         model.addAttribute("grandTotal", grand);
         model.addAttribute("topTokens", top);
-        model.addAttribute("pieLabels", pie.labels());   // List<String>
-        model.addAttribute("pieValues", pie.values());   // List<BigDecimal or Number>
+        model.addAttribute("pieLabels", pie.labels());
+        model.addAttribute("pieValues", pie.values());
 
         return "dashboard";
     }
 
-    // Ingest buttons (reuse existing endpoints)
+    // ----- Actions wired to the composite façade -----
+
     @PostMapping("/dashboard/ingest-all")
     public String ingestAll(@RequestParam(defaultValue = "primary") String account,
-                            @RequestParam(defaultValue = "gbp") String vs) {
-        // You already have per-kind ingesters; this calls our façade
-        binanceTrades.ingestAllAssets(account, null);
-        binanceOther.ingestAll(account, null);
-        binanceTransfers.ingestDeposits(account, null);
-        binanceTransfers.ingestWithdrawals(account, null);
+                            @RequestParam(defaultValue = "gbp") String vs,
+                            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant since,
+                            RedirectAttributes flash) {
+        var res = binance.ingestAll(account, since);
+        flash.addFlashAttribute("ingestMsg",
+                "Binance ingest: " + res.total() + " rows "
+                        + "(trades=" + res.trades() + ", deposits=" + res.deposits()
+                        + ", withdrawals=" + res.withdrawals() + ", converts=" + res.converts()
+                        + ", dust=" + res.dust() + ", rewards=" + res.rewards() + ")");
         return "redirect:/dashboard?account=" + account + "&vs=" + vs;
     }
 
     @PostMapping("/binance/ingest-trades")
     public String ingestTrades(@RequestParam(defaultValue = "primary") String account,
-                               @RequestParam(defaultValue = "gbp") String vs) {
-        binanceTrades.ingestAllAssets(account, null); // or call trade service directly
+                               @RequestParam(defaultValue = "gbp") String vs,
+                               @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant since) {
+        binance.ingestTrades(account, since);
         return "redirect:/dashboard?account=" + account + "&vs=" + vs;
     }
 
@@ -83,43 +78,39 @@ public class DashboardController {
     public String ingestDeposits(@RequestParam(defaultValue = "primary") String account,
                                  @RequestParam(defaultValue = "gbp") String vs,
                                  @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant since) {
-        // call your deposit service
-        binanceTransfers.ingestDeposits(account, since);
+        binance.ingestDeposits(account, since);
         return "redirect:/dashboard?account=" + account + "&vs=" + vs;
     }
 
     @PostMapping("/binance/ingest-withdrawals")
     public String ingestWithdrawals(@RequestParam(defaultValue = "primary") String account,
-                                 @RequestParam(defaultValue = "gbp") String vs,
-                                 @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant since) {
-        // call your deposit service
-        binanceTransfers.ingestWithdrawals(account, since);
+                                    @RequestParam(defaultValue = "gbp") String vs,
+                                    @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant since) {
+        binance.ingestWithdrawals(account, since);
         return "redirect:/dashboard?account=" + account + "&vs=" + vs;
     }
 
-
-
-    // ...repeat for withdrawals/dust/convert/rewards similarly, each redirecting back
     @PostMapping("/binance/ingest-dust")
-    public String dust(@RequestParam(defaultValue = "primary") String account,
-                       @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant since) {
-        binanceOther.ingestDust(account, since);
-        return "redirect:/dashboard?account=" + account + "&vs=gbp";
+    public String ingestDust(@RequestParam(defaultValue = "primary") String account,
+                             @RequestParam(defaultValue = "gbp") String vs,
+                             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant since) {
+        binance.ingestDust(account, since);
+        return "redirect:/dashboard?account=" + account + "&vs=" + vs;
     }
 
     @PostMapping("/binance/ingest-convert")
-    public String convert(@RequestParam(defaultValue = "primary") String account,
-                          @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant since) {
-        binanceOther.ingestConvertTrades(account, since);
-        return "redirect:/dashboard?account=" + account + "&vs=gbp";
+    public String ingestConvert(@RequestParam(defaultValue = "primary") String account,
+                                @RequestParam(defaultValue = "gbp") String vs,
+                                @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant since) {
+        binance.ingestConverts(account, since);
+        return "redirect:/dashboard?account=" + account + "&vs=" + vs;
     }
 
     @PostMapping("/binance/ingest-rewards")
-    public String rewards(@RequestParam(defaultValue = "primary") String account,
-                          @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant since) {
-        binanceOther.ingestRewards(account, since);
-        return "redirect:/dashboard?account=" + account + "&vs=gbp";
+    public String ingestRewards(@RequestParam(defaultValue = "primary") String account,
+                                @RequestParam(defaultValue = "gbp") String vs,
+                                @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant since) {
+        binance.ingestRewards(account, since);
+        return "redirect:/dashboard?account=" + account + "&vs=" + vs;
     }
-
-
 }

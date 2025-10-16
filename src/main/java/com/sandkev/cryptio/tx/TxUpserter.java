@@ -9,17 +9,17 @@ import java.time.Instant;
 public interface TxUpserter extends TxWriter {
     Tx convertTx(String exchange, String accountRef, String asset, String dir, BigDecimal qty, Instant ts, String orderId);
 
-    void upsert(String exchange,
-                String accountRef,
-                String base,
-                String quote,
-                String type,
-                BigDecimal quantity,
-                BigDecimal price,
-                BigDecimal fee,
-                String feeAsset,
-                Instant ts,
-                String externalId);
+    int upsert(String exchange,
+               String accountRef,
+               String base,
+               String quote,
+               String type,
+               BigDecimal quantity,
+               BigDecimal price,
+               BigDecimal fee,
+               String feeAsset,
+               Instant ts,
+               String externalId);
 
 
 }

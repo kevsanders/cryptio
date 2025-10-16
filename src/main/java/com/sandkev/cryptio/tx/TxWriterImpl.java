@@ -23,9 +23,11 @@ public class TxWriterImpl implements TxWriter, TxUpserter {
     /**
      * Idempotent upsert into tx using unique (exchange, external_id).
      * Keep 'id' auto-generated; never assign it.
+     *
+     * @return
      */
     @Override
-    public void upsert(
+    public int upsert(
             String exchange,
             String accountRef,
             String base,
@@ -38,21 +40,50 @@ public class TxWriterImpl implements TxWriter, TxUpserter {
             Instant ts,
             String externalId
     ) {
-        jdbc.update("""
-            merge into tx (exchange, account_ref, base, quote, type, quantity, price, fee, fee_asset, ts, external_id)
-            key (exchange, external_id)
-            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+
+        // 1) Try to INSERT only if missing (unique index on (exchange, external_id) must exist)
+        int inserted = jdbc.update("""
+        insert into tx (exchange, account_ref, base, quote, type, quantity, price, fee, fee_asset, ts, external_id)
+        select ?,?,?,?,?,?,?,?,?,?,?
+        where not exists (
+            select 1 from tx where exchange=? and external_id=?
+        )
         """,
                 exchange, accountRef, base, quote, type,
-                nz(quantity), price, fee, feeAsset,
-                Timestamp.from(ts), externalId
+                quantity, price, fee, feeAsset, Timestamp.from(ts), externalId,
+                exchange, externalId
         );
+        if (inserted == 1) return 1; // inserted
+
+        // 2) Optional UPDATE to converge data for an existing row.
+        //    Return the number of rows actually updated (usually 1; could be 0 if values identical).
+        return jdbc.update("""
+        update tx
+           set quantity = coalesce(?, quantity),
+               price    = coalesce(?, price),
+               fee      = coalesce(?, fee),
+               fee_asset= coalesce(?, fee_asset),
+               ts       = coalesce(?, ts)
+         where exchange=? and external_id=?
+        """,
+                quantity, price, fee, feeAsset, Timestamp.from(ts),
+                exchange, externalId
+        );
+//        jdbc.update("""
+//            merge into tx (exchange, account_ref, base, quote, type, quantity, price, fee, fee_asset, ts, external_id)
+//            key (exchange, external_id)
+//            values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+//        """,
+//                exchange, accountRef, base, quote, type,
+//                nz(quantity), price, fee, feeAsset,
+//                Timestamp.from(ts), externalId
+//        );
     }
 
     private static BigDecimal nz(BigDecimal x) { return x == null ? BigDecimal.ZERO : x; }
 
     @Override
-    public void write(Tx tx) {
+    public int write(Tx tx) {
         // --- required fields ---
         if (tx.getExchange() == null) throw new IllegalArgumentException("Tx.exchange is required");
         if (tx.getAsset() == null)     throw new IllegalArgumentException("Tx.base is required");
@@ -71,7 +102,7 @@ public class TxWriterImpl implements TxWriter, TxUpserter {
                 ? tx.getQuote()
                 : tx.getFeeAsset();
 
-        upsert(
+        return upsert(
                 tx.getExchange(),
                 tx.getAccountRef(),               // nullable
                 tx.getAsset(),
