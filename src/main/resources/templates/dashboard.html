@@ -80,6 +80,7 @@
             <form method="post" action="/binance/ingest-convert"><input type="hidden" name="account" th:value="${account}"><button>Convert</button></form>
             <form method="post" action="/binance/ingest-rewards"><input type="hidden" name="account" th:value="${account}"><button>Rewards</button></form>
             <form method="post" action="/dashboard/ingest-all"><input type="hidden" name="account" th:value="${account}"><input type="hidden" name="vs" th:value="${vs}"><button><strong>All (since checkpoint)</strong></button></form>
+            <form method="post" action="/binance/ingest-trades-from-list"><input type="hidden" name="account" th:value="${account}"><input type="hidden" name="vs" th:value="${vs}"><input type="hidden" name="since" value="2019-01-01T00:00:00Z"><button>Trades (from list)</button></form>
         </div>
     </section>
 </main>

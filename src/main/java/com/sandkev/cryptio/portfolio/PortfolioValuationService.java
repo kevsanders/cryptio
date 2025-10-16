@@ -31,7 +31,7 @@ public class PortfolioValuationService {
     private static final MathContext MC = MathContext.DECIMAL64;
 
     /** Load latest balances (platform, asset, total_amt) for an account. */
-    private List<BalanceRow> loadLatestBalances(String accountRef) {
+    public List<BalanceRow> loadLatestBalances(String accountRef) {
         return jdbc.query("""
             select exchange as platform, asset, sum(total_amt) as qty
             from v_latest_balance

@@ -9,8 +9,10 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.servlet.mvc.support.RedirectAttributes;
+import org.springframework.web.util.UriUtils;
 
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 
 @Controller
@@ -113,4 +115,24 @@ public class DashboardController {
         binance.ingestRewards(account, since);
         return "redirect:/dashboard?account=" + account + "&vs=" + vs;
     }
+
+    // DashboardController.java
+    @PostMapping("/binance/ingest-trades-from-list")
+    public String ingestTradesFromList(@RequestParam("account") String accountRef,
+                                       @RequestParam(value = "since", required = false)
+                                       @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant since,
+                                       @RequestParam(value = "vs", required = false) String vs,
+                                       RedirectAttributes redirectAttributes) {
+
+        int upserts = binance.ingestTradesFromList(accountRef, since);
+
+        redirectAttributes.addFlashAttribute("notice",
+                "Binance trades (from list): upserted " + upserts + " rows");
+
+        // preserve current dashboard context
+        String query = "?exchange=binance&account=" + UriUtils.encode(accountRef, StandardCharsets.UTF_8)
+                + (vs != null ? "&vs=" + UriUtils.encode(vs, StandardCharsets.UTF_8) : "");
+        return "redirect:/dashboard" + query;
+    }
+
 }

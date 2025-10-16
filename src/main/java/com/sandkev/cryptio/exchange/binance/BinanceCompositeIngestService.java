@@ -22,6 +22,7 @@ public class BinanceCompositeIngestService {
     private final BinanceConvertIngestService converts;
     private final BinanceDustIngestService dust;
     private final BinanceRewardsIngestService rewards;
+    private final BinanceTradeIngestFromListService tradesFromList;
 
     public record Result(
             int trades,
@@ -51,6 +52,7 @@ public class BinanceCompositeIngestService {
     public int ingestConverts(String accountRef, @Nullable Instant sinceInclusive)    { return converts.ingest(accountRef, sinceInclusive); }
     public int ingestDust(String accountRef, @Nullable Instant sinceInclusive)        { return dust.ingest(accountRef, sinceInclusive); }
     public int ingestRewards(String accountRef, @Nullable Instant sinceInclusive)     { return rewards.ingest(accountRef, sinceInclusive); }
+    public int ingestTradesFromList(String accountRef, @Nullable Instant sinceInclusive)     { return tradesFromList.ingest(accountRef, sinceInclusive); }
 
     /** Keep dashboard UX resilient — log and continue if one source fails. */
     private int safeRun(Job job, String label) {
