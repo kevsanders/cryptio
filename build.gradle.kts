@@ -52,6 +52,8 @@ dependencies {
 	testCompileOnly("org.projectlombok:lombok")
 	testAnnotationProcessor("org.projectlombok:lombok")
 
+	implementation("org.springframework.boot:spring-boot-starter-security")
+
 }
 
 // Move ALL Gradle outputs away from OneDrive

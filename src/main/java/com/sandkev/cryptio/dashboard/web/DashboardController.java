@@ -18,6 +18,7 @@ import java.time.Instant;
 @Controller
 public class DashboardController {
 
+    public static final String DASHBOARD = "dashboard";
     private final PortfolioValuationService valuation;
     private final BinanceCompositeIngestService binance;
 
@@ -28,9 +29,9 @@ public class DashboardController {
     }
 
     @GetMapping("/")
-    public String rootRedirect() { return "redirect:/dashboard"; }
+    public String rootRedirect() { return "redirect:/" + DASHBOARD; }
 
-    @GetMapping("/dashboard")
+    @GetMapping("/" + DASHBOARD)
     public String dashboard(@RequestParam(defaultValue = "primary") String account,
                             @RequestParam(defaultValue = "gbp") String vs,
                             Model model) {
@@ -49,12 +50,12 @@ public class DashboardController {
         model.addAttribute("pieLabels", pie.labels());
         model.addAttribute("pieValues", pie.values());
 
-        return "dashboard";
+        return DASHBOARD;
     }
 
     // ----- Actions wired to the composite façade -----
 
-    @PostMapping("/dashboard/ingest-all")
+    @PostMapping("/"+DASHBOARD+"/ingest-all")
     public String ingestAll(@RequestParam(defaultValue = "primary") String account,
                             @RequestParam(defaultValue = "gbp") String vs,
                             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant since,
@@ -65,7 +66,7 @@ public class DashboardController {
                         + "(trades=" + res.trades() + ", deposits=" + res.deposits()
                         + ", withdrawals=" + res.withdrawals() + ", converts=" + res.converts()
                         + ", dust=" + res.dust() + ", rewards=" + res.rewards() + ")");
-        return "redirect:/dashboard?account=" + account + "&vs=" + vs;
+        return "redirect:/"+DASHBOARD+"?account=" + account + "&vs=" + vs;
     }
 
     @PostMapping("/binance/ingest-trades")
@@ -73,7 +74,7 @@ public class DashboardController {
                                @RequestParam(defaultValue = "gbp") String vs,
                                @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant since) {
         binance.ingestTrades(account, since);
-        return "redirect:/dashboard?account=" + account + "&vs=" + vs;
+        return "redirect:/"+DASHBOARD+"?account=" + account + "&vs=" + vs;
     }
 
     @PostMapping("/binance/ingest-deposits")
@@ -81,7 +82,7 @@ public class DashboardController {
                                  @RequestParam(defaultValue = "gbp") String vs,
                                  @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant since) {
         binance.ingestDeposits(account, since);
-        return "redirect:/dashboard?account=" + account + "&vs=" + vs;
+        return "redirect:/"+DASHBOARD+"?account=" + account + "&vs=" + vs;
     }
 
     @PostMapping("/binance/ingest-withdrawals")
@@ -89,7 +90,7 @@ public class DashboardController {
                                     @RequestParam(defaultValue = "gbp") String vs,
                                     @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant since) {
         binance.ingestWithdrawals(account, since);
-        return "redirect:/dashboard?account=" + account + "&vs=" + vs;
+        return "redirect:/"+DASHBOARD+"?account=" + account + "&vs=" + vs;
     }
 
     @PostMapping("/binance/ingest-dust")
@@ -97,7 +98,7 @@ public class DashboardController {
                              @RequestParam(defaultValue = "gbp") String vs,
                              @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant since) {
         binance.ingestDust(account, since);
-        return "redirect:/dashboard?account=" + account + "&vs=" + vs;
+        return "redirect:/" + DASHBOARD + "?account=" + account + "&vs=" + vs;
     }
 
     @PostMapping("/binance/ingest-convert")
@@ -105,7 +106,7 @@ public class DashboardController {
                                 @RequestParam(defaultValue = "gbp") String vs,
                                 @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant since) {
         binance.ingestConverts(account, since);
-        return "redirect:/dashboard?account=" + account + "&vs=" + vs;
+        return "redirect:/" + DASHBOARD + "?account=" + account + "&vs=" + vs;
     }
 
     @PostMapping("/binance/ingest-rewards")
@@ -113,7 +114,7 @@ public class DashboardController {
                                 @RequestParam(defaultValue = "gbp") String vs,
                                 @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) Instant since) {
         binance.ingestRewards(account, since);
-        return "redirect:/dashboard?account=" + account + "&vs=" + vs;
+        return "redirect:/" + DASHBOARD+ "?account=" + account + "&vs=" + vs;
     }
 
     // DashboardController.java
@@ -132,7 +133,7 @@ public class DashboardController {
         // preserve current dashboard context
         String query = "?exchange=binance&account=" + UriUtils.encode(accountRef, StandardCharsets.UTF_8)
                 + (vs != null ? "&vs=" + UriUtils.encode(vs, StandardCharsets.UTF_8) : "");
-        return "redirect:/dashboard" + query;
+        return "redirect:/" + DASHBOARD + query;
     }
 
 }
