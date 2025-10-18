@@ -41,7 +41,7 @@ dependencies {
 	implementation("org.springframework.boot:spring-boot-starter-thymeleaf")
 	implementation("org.springframework.boot:spring-boot-starter-jdbc") // for JdbcTemplate upserts
 
-	testImplementation("com.github.tomakehurst:wiremock-jre8:2.35.2")
+	testImplementation("org.wiremock:wiremock-jetty12:3.6.0") // or latest
 	testImplementation("org.assertj:assertj-core:3.26.3")
 
 	// Lombok as compile-only + annotation processor
