@@ -24,7 +24,7 @@ public class BalancesController {
                            Model model) {
 
         ingestService.ingestBinance(account);
-        //ingestService.ingestKraken(account);
+        ingestService.ingestKraken(account);
 
         var rows = balances.latest(exchange, account);
         model.addAttribute("exchange", exchange);

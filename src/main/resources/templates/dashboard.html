@@ -125,31 +125,56 @@ createApp({
     // NEW: Grid.js tables with numeric sorting + pretty formatting
     renderTables() {
       // PLATFORM TOTALS
-      const platEl = document.getElementById('platformTable');
-      if (platEl) {
-        const platData = this.platformTotals.map(p => [p.platform, Number(p.value ?? 0)]);
-        const platColumns = [
-          { name: 'Platform' },
-          {
-            name: `Value (${this.vs.toUpperCase()})`,
-            attributes: { 'class': 'right' },
-            sort: { compare: (a, b) => a - b },
-            formatter: (cell) => Number(cell).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-          }
-        ];
+        const platEl = document.getElementById('platformTable');
+        if (platEl) {
+          // base rows
+          const platRows = this.platformTotals.map(p => [p.platform, Number(p.value ?? 0)]);
+          // append grand total
+          platRows.push(['Total', Number(this.grandTotal ?? 0)]);
 
-        if (!this.platformGrid) {
-          this.platformGrid = new gridjs.Grid({
-            columns: platColumns,
-            data: platData,
-            pagination: false,
-            sort: true,
-            search: true,
-            className: { table: 'w-100' }
-          }).render(platEl);
-        } else {
-          this.platformGrid.updateConfig({ columns: platColumns, data: platData }).forceRender();
-        }
+          const gbpFmt = (n) => Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+          const platColumns = [
+            {
+              name: 'Platform',
+              // keep "Total" at the bottom when sorting by Platform
+              sort: {
+                compare: (a, b) => (a === 'Total') - (b === 'Total') || String(a).localeCompare(String(b))
+              },
+              formatter: (cell, row) =>
+                row?.cells?.[0]?.data === 'Total'
+                  ? gridjs.html('<strong>Total</strong>')
+                  : cell
+            },
+            {
+              name: `Value (${this.vs.toUpperCase()})`,
+              attributes: { 'class': 'right' },
+              // disable value sorting to keep the Total row pinned at the bottom
+              // (Grid.js cell-only comparator can’t easily detect the row to push it down)
+              sort: false,
+              formatter: (cell, row) => {
+                const v = gbpFmt(cell);
+                return row?.cells?.[0]?.data === 'Total'
+                  ? gridjs.html(`<strong>${v}</strong>`)
+                  : gridjs.html(v);
+              }
+            }
+          ];
+
+          if (!this.platformGrid) {
+            this.platformGrid = new gridjs.Grid({
+              columns: platColumns,
+              data: platRows,
+              pagination: false,
+              sort: true,   // still allows sorting on the Platform column; Value column sort is disabled
+              search: true,
+              className: { table: 'w-100' }
+            }).render(platEl);
+          } else {
+            this.platformGrid
+              .updateConfig({ columns: platColumns, data: platRows })
+              .forceRender();
+          }
       }
 
       // TOP TOKENS

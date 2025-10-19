@@ -42,7 +42,7 @@ public class BinanceClientConfig {
     }
 
     @ConfigurationProperties("binance.client")
-    public static record BinanceClientProperties(
+    public record BinanceClientProperties(
             String baseUrl,
             String apiKey,
             String secretKey,

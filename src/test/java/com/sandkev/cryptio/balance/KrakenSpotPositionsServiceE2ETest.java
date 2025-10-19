@@ -1,8 +1,8 @@
 package com.sandkev.cryptio.balance;
 
+import com.sandkev.cryptio.config.KrakenClientConfig.KrakenClientProperties;
 import com.sandkev.cryptio.exchange.kraken.KrakenSpotPositionsService;
-import com.sandkev.cryptio.config.KrakenSpotConfig;
-import com.sandkev.cryptio.config.KrakenSpotProperties;
+import com.sandkev.cryptio.config.KrakenClientConfig;
 import org.junit.jupiter.api.*;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -19,10 +19,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 @Tag("live")
 @ActiveProfiles("test")
 @SpringBootTest(
-        classes = { KrakenSpotConfig.class, KrakenSpotPositionsService.class },
+        classes = { KrakenClientConfig.class, KrakenSpotPositionsService.class },
         webEnvironment = SpringBootTest.WebEnvironment.NONE
 )
-@EnableConfigurationProperties(KrakenSpotProperties.class)
+@EnableConfigurationProperties(KrakenClientProperties.class)
 @TestPropertySource(properties = {
         "kraken.spot.base-url=${KRAKEN_BASE_URL:https://api.kraken.com}",
         "kraken.spot.api-key=${KRAKEN_API_KEY:}",
@@ -32,7 +32,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 class KrakenSpotPositionsServiceE2ETest {
 
     @Autowired KrakenSpotPositionsService svc;
-    @Autowired KrakenSpotProperties props;
+    @Autowired
+    KrakenClientProperties props;
 
     @BeforeEach
     void requireKeys() {

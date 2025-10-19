@@ -1,7 +1,8 @@
 package com.sandkev.cryptio.exchange.kraken;
 
-import com.sandkev.cryptio.config.KrakenSpotProperties;
 import com.github.tomakehurst.wiremock.WireMockServer;
+import com.sandkev.cryptio.config.KrakenClientConfig;
+import com.sandkev.cryptio.config.KrakenClientConfig.KrakenClientProperties;
 import org.junit.jupiter.api.*;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.MediaType;
@@ -49,7 +50,7 @@ class KrakenSignedClientImplTest {
                 .baseUrl("http://localhost:" + wm.port())
                 .build();
 
-        KrakenSpotProperties props = new KrakenSpotProperties(
+        KrakenClientProperties props = new KrakenClientProperties(
                 "http://localhost:" + wm.port(), // baseUrl (not strictly used by the impl if you pass WebClient)
                 apiKey,
                 base64Secret,

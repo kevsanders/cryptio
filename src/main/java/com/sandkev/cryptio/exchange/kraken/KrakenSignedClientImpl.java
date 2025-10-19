@@ -1,5 +1,6 @@
 package com.sandkev.cryptio.exchange.kraken;
 
+import com.sandkev.cryptio.config.KrakenClientConfig.KrakenClientProperties;
 import com.sandkev.cryptio.shared.http.HttpRetrySupport;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -33,7 +34,7 @@ public class KrakenSignedClientImpl implements KrakenSignedClient {
     // Prefer naming this bean explicitly in your @Configuration
     // e.g., @Bean(name="krakenWebClient") WebClient ...
     private final WebClient krakenWebClient;
-    private final com.sandkev.cryptio.config.KrakenSpotProperties props;
+    private final KrakenClientProperties props;
 
     // ---------- SignedClient API ----------
 
