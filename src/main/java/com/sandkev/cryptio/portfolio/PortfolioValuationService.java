@@ -8,6 +8,7 @@ import java.math.BigDecimal;
 import java.math.MathContext;
 import java.util.*;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 @Service
 public class PortfolioValuationService {
@@ -77,10 +78,18 @@ public class PortfolioValuationService {
     }
 
     /** Top N tokens by value (vs fiat). */
-    public List<TokenSlice> topTokens(String accountRef, String vs, int limit, Double minPct) {
+    public List<TokenSlice> topTokens(String accountRef, String vs, int limit, Double minPct, String exFilter) {
         var rows = loadLatestBalances(accountRef);
 
-        var symbols = rows.stream()
+        Stream<BalanceRow> stream = rows.stream();
+
+        // Apply platform filter only when provided and not "total"
+        if (exFilter != null && !"total".equalsIgnoreCase(exFilter)) {
+            final String ex = exFilter; // keep as-is; use equalsIgnoreCase below
+            stream = stream.filter(r -> r.platform() != null && r.platform().equalsIgnoreCase(ex));
+        }
+
+        var symbols = stream
                 .map(BalanceRow::asset)
                 .filter(Objects::nonNull)
                 .map(String::toUpperCase)
@@ -111,10 +120,18 @@ public class PortfolioValuationService {
     }
 
     /** Pie labels & values; group small slices into OTHER if below minPct. */
-    public PieData pieData(String accountRef, String vs, double minPct) {
+    public PieData pieData(String accountRef, String vs, double minPct, String exFilter) {
         var rows = loadLatestBalances(accountRef);
 
-        var symbols = rows.stream()
+        Stream<BalanceRow> stream = rows.stream();
+
+        // Apply platform filter only when provided and not "total"
+        if (exFilter != null && !"total".equalsIgnoreCase(exFilter)) {
+            final String ex = exFilter; // keep as-is; use equalsIgnoreCase below
+            stream = stream.filter(r -> r.platform() != null && r.platform().equalsIgnoreCase(ex));
+        }
+
+        var symbols = stream
                 .map(BalanceRow::asset)
                 .filter(Objects::nonNull)
                 .map(String::toUpperCase)

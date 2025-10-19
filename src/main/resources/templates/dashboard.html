@@ -36,7 +36,17 @@
 
         <!-- RIGHT: Top tokens only -->
         <section class="card">
-            <h2>Allocation by token</h2>
+            <h2 style="display:flex; align-items:center; justify-content:space-between;">
+                <span>Allocation by token</span>
+                <label style="display:flex; align-items:center; gap:8px; font-weight:600;">
+                    <span>{{ exchangeFilter === 'total' ? 'Total' : exchangeFilter.charAt(0).toUpperCase() + exchangeFilter.slice(1) }}</span>
+                    <select v-model="exchangeFilter" @change="applyExchangeFilter" style="min-width:120px;">
+                        <option value="total">Total</option>
+                        <option value="binance">binance</option>
+                        <option value="kraken">kraken</option>
+                    </select>
+                </label>
+            </h2>
             <div class="content">
                 <div id="topTokensTable"></div>
                 <div class="muted" style="margin-top:8px">Small positions are grouped into “Other”.</div>
@@ -89,6 +99,9 @@ createApp({
       busy: false,
       mountedOk: false,
 
+      //enable exchange filter
+      exchangeFilter: 'total',   // <— ADD THIS
+
       // NEW: grid handles
       platformGrid: null,
       tokensGrid: null,
@@ -97,7 +110,9 @@ createApp({
   methods: {
     async load() {
       try {
-        const q = new URLSearchParams({ account: this.account, vs: this.vs });
+        const params = { account: this.account, vs: this.vs };
+        if (this.exchangeFilter !== 'total') params.exchange = this.exchangeFilter;
+        const q = new URLSearchParams(params);
         const res = await fetch(`/api/dashboard?${q}`, { credentials: 'same-origin' });
         if (!res.ok) throw new Error(`Failed to load dashboard: ${res.status} ${res.statusText}`);
         const ct = res.headers.get('content-type') || '';
@@ -205,6 +220,14 @@ createApp({
         }
       }
     },
+    applyExchangeFilter() {
+      // persist selection to URL (optional)
+      const q = new URLSearchParams({ account: this.account, vs: this.vs });
+      if (this.exchangeFilter !== 'total') q.set('exchange', this.exchangeFilter);
+      history.replaceState(null, '', `/api/dashboard?${q}`);
+
+      this.load(); // refresh tokens + pie for selected exchange
+    },
 
     renderPie() {
       const canvas = document.getElementById('pie');
@@ -251,7 +274,8 @@ createApp({
     },
     applyFilters() {
       const q = new URLSearchParams({ account: this.account, vs: this.vs });
-      history.replaceState(null, '', `/dashboard?${q}`);
+      if (this.exchangeFilter !== 'total') q.set('exchange', this.exchangeFilter); // <— keep it
+      history.replaceState(null, '', `/api/dashboard?${q}`);
       this.load();
     },
     format2(n) {
@@ -259,6 +283,9 @@ createApp({
     }
   },
   async mounted() {
+    const qs = new URLSearchParams(location.search);
+    const ex = (qs.get('exchange') || 'total').toLowerCase();
+    if (['binance','kraken','total'].includes(ex)) this.exchangeFilter = ex;
     console.log('Vue app mounted: starting load()');
     await this.load();
     // If you still see a blank page, check the console/network tab after this.

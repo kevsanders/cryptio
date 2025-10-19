@@ -34,13 +34,15 @@ public class DashboardController {
     @GetMapping("/" + DASHBOARD)
     public String dashboard(@RequestParam(defaultValue = "primary") String account,
                             @RequestParam(defaultValue = "gbp") String vs,
+                            @RequestParam(defaultValue = "total") String exchange, // binance | kraken | total
                             Model model) {
 
         var totals = valuation.platformTotals(account, vs);
         BigDecimal grand = totals.stream().map(t -> t.value()).reduce(BigDecimal.ZERO, BigDecimal::add);
 
-        var top = valuation.topTokens(account, vs, 12, 0.01);
-        var pie = valuation.pieData(account, vs, 0.02);
+        String exFilter = "total".equalsIgnoreCase(exchange) ? null : exchange.toLowerCase();
+        var top = valuation.topTokens(account, vs, 12, 0.01, exFilter);
+        var pie = valuation.pieData(account, vs, 0.02, exFilter);
 
         model.addAttribute("account", account);
         model.addAttribute("vs", vs);

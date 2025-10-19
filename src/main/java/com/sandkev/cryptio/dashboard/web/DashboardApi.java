@@ -20,12 +20,18 @@ public class DashboardApi {
     @GetMapping("/dashboard")
     public DashboardResponse get(
             @RequestParam(defaultValue = "primary") String account,
-            @RequestParam(defaultValue = "gbp") String vs
+            @RequestParam(defaultValue = "gbp") String vs,
+            @RequestParam(defaultValue = "total") String exchange // binance | kraken | total
     ) {
         var totals = valuation.platformTotals(account, vs);
-        BigDecimal grand = totals.stream().map(t -> t.value()).reduce(BigDecimal.ZERO, BigDecimal::add);
-        var top = valuation.topTokens(account, vs, 12, 0.01);
-        var pie = valuation.pieData(account, vs, 0.02);
+        var grand = totals.stream().map(t -> t.value()).reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        String exFilter = "total".equalsIgnoreCase(exchange) ? null : exchange.toLowerCase();
+
+        // These overloads take an optional exchange filter. If you don't have them yet,
+        // implement the filter inside these methods.
+        var top = valuation.topTokens(account, vs, 12, 0.01, exFilter);
+        var pie = valuation.pieData(account, vs, 0.02, exFilter);
 
         return new DashboardResponse(
                 totals.stream().map(t -> new PlatformTotal(t.platform(), t.value())).toList(),
@@ -34,6 +40,7 @@ public class DashboardApi {
                 new PieData(pie.labels(), pie.values())
         );
     }
+
 
     public record DashboardResponse(
             List<PlatformTotal> platformTotals,
