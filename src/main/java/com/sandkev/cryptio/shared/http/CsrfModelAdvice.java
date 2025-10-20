@@ -1,4 +1,4 @@
- package com.sandkev.cryptio.dashboard.web;
+ package com.sandkev.cryptio.shared.http;
 
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.security.web.csrf.CsrfToken;

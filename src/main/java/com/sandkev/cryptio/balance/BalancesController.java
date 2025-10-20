@@ -2,7 +2,6 @@
 package com.sandkev.cryptio.balance;
 
 import com.sandkev.cryptio.portfolio.BalanceViewDao;
-import com.sandkev.cryptio.balance.BalanceIngestService;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.*;

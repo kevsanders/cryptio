@@ -28,6 +28,9 @@ Balances are ingested via exchange APIs, normalized into a relational schema (ma
 ## Architecture
 [![Architecture overview](src/main/resources/docs/architecture-diagram-v1.png)](src/main/resources/docs/architecture-diagram-v1.png)
 
+## Sequence
+[![Balance Sequence](src/main/resources/docs/balance-sequence.jpg)](src/main/resources/docs/balance-sequence.jpg)
+
 
 ### Clone & Build
 ```bash

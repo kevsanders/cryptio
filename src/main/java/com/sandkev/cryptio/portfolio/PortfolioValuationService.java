@@ -1,28 +1,27 @@
 package com.sandkev.cryptio.portfolio;
 
 import com.sandkev.cryptio.price.CoinGeckoPriceService;
-import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.math.MathContext;
 import java.util.*;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 @Service
 public class PortfolioValuationService {
 
-    private final JdbcTemplate jdbc;
+    private final BalanceViewDao balances;         // <-- use DAO, not JdbcTemplate
     private final CoinGeckoPriceService prices;
 
-    public PortfolioValuationService(JdbcTemplate jdbc, CoinGeckoPriceService prices) {
-        this.jdbc = jdbc;
+    public PortfolioValuationService(BalanceViewDao balances, CoinGeckoPriceService prices) {
+        this.balances = balances;
         this.prices = prices;
     }
 
-    /** Row projected from v_latest_balance */
-    public record BalanceRow(String platform, String asset, BigDecimal qty) {}
+    /** Row we work with after pulling from DAO (canonical may be null). */
+    public record BalanceRow(String platform, String assetCanonical, String assetRaw, BigDecimal qty) {}
 
     /** Dashboard DTOs */
     public record PlatformTotal(String platform, BigDecimal value) {}
@@ -31,82 +30,78 @@ public class PortfolioValuationService {
 
     private static final MathContext MC = MathContext.DECIMAL64;
 
-    /** Load latest balances (platform, asset, total_amt) for an account. */
-    public List<BalanceRow> loadLatestBalances(String accountRef) {
-        return jdbc.query("""
-            select exchange as platform, asset, sum(total_amt) as qty
-            from v_latest_balance
-            where account = ?
-            group by exchange, asset
-        """, (rs, i) -> new BalanceRow(
-                rs.getString("platform"),
-                rs.getString("asset"),
-                rs.getBigDecimal("qty")
-        ), accountRef);
+    /** Load latest balances for an account (via DAO), optionally filter by exchange. */
+    private List<BalanceRow> loadLatestFromDao(String accountRef, @Nullable String exFilter) {
+        // latestLeftJoin(exchangeOpt, account) -> rows with: exchange, account, asset (canonical), assetRaw, total
+        var rows = balances.latest(exFilter, accountRef);
+
+        return rows.stream()
+                .map(r -> new BalanceRow(
+                        r.exchange(),                    // platform (binance/kraken/…)
+                        r.asset(),                       // canonical (nullable if unmapped)
+                        r.asset(),                       // raw from exchange
+                        r.total()                        // total qty
+                ))
+                .toList();
     }
 
-    /** Per-platform totals (in vs fiat). */
+    /** Per-platform totals (in vs fiat). Unmapped assets contribute zero. */
     public List<PlatformTotal> platformTotals(String accountRef, String vs) {
-        var rows = loadLatestBalances(accountRef);
+        // No exchange filter here; totals want all platforms
+        var rows = loadLatestFromDao(accountRef, null);
 
-        // symbols present in balances
+        // Only request prices for canonically-mapped symbols
         var symbols = rows.stream()
-                .map(BalanceRow::asset)
+                .map(BalanceRow::assetCanonical)
                 .filter(Objects::nonNull)
-                .map(String::toUpperCase)
+                .map(s -> s.toUpperCase(Locale.ROOT))
                 .collect(Collectors.toCollection(LinkedHashSet::new));
 
-        // SYMBOL -> price map (via CoinGecko IDs)
         Map<String, BigDecimal> priceMap = priceBySymbol(symbols, vs);
 
         Map<String, BigDecimal> byPlatform = new LinkedHashMap<>();
         for (var r : rows) {
-            var sym = r.asset() == null ? "" : r.asset().toUpperCase();
-            var px = priceMap.getOrDefault(sym, BigDecimal.ZERO);
-            var value = (r.qty() == null ? BigDecimal.ZERO : r.qty().multiply(px, MC));
-            byPlatform.merge(
-                    (r.platform() == null ? "unknown" : r.platform()),
-                    value,
-                    BigDecimal::add
-            );
+            String platform = (r.platform() == null ? "unknown" : r.platform());
+            String sym = (r.assetCanonical() == null ? null : r.assetCanonical().toUpperCase(Locale.ROOT));
+
+            BigDecimal px = (sym == null) ? BigDecimal.ZERO : priceMap.getOrDefault(sym, BigDecimal.ZERO);
+            BigDecimal qty = (r.qty() == null ? BigDecimal.ZERO : r.qty());
+            BigDecimal value = qty.multiply(px, MC);
+
+            byPlatform.merge(platform, value, BigDecimal::add);
         }
 
         return byPlatform.entrySet().stream()
+                .sorted(Map.Entry.comparingByKey())
                 .map(e -> new PlatformTotal(e.getKey(), e.getValue()))
-                .sorted(Comparator.comparing(PlatformTotal::platform))
                 .toList();
     }
 
-    /** Top N tokens by value (vs fiat). */
-    public List<TokenSlice> topTokens(String accountRef, String vs, int limit, Double minPct, String exFilter) {
-        var rows = loadLatestBalances(accountRef);
+    /** Top N tokens by value (vs fiat). Unmapped assets are ignored (value=0). */
+    public List<TokenSlice> topTokens(String accountRef, String vs, int limit, Double minPct, @Nullable String exFilter) {
+        // IMPORTANT: filter once, then use the filtered list for everything downstream
+        var filteredRows = loadLatestFromDao(accountRef, normalizedExchangeFilter(exFilter));
 
-        Stream<BalanceRow> stream = rows.stream();
-
-        // Apply platform filter only when provided and not "total"
-        if (exFilter != null && !"total".equalsIgnoreCase(exFilter)) {
-            final String ex = exFilter; // keep as-is; use equalsIgnoreCase below
-            stream = stream.filter(r -> r.platform() != null && r.platform().equalsIgnoreCase(ex));
-        }
-
-        var symbols = stream
-                .map(BalanceRow::asset)
+        var symbols = filteredRows.stream()
+                .map(BalanceRow::assetCanonical)
                 .filter(Objects::nonNull)
-                .map(String::toUpperCase)
+                .map(s -> s.toUpperCase(Locale.ROOT))
                 .collect(Collectors.toCollection(LinkedHashSet::new));
 
         Map<String, BigDecimal> priceMap = priceBySymbol(symbols, vs);
 
         Map<String, BigDecimal> byAsset = new LinkedHashMap<>();
-        for (var r : rows) {
-            var sym = r.asset() == null ? "" : r.asset().toUpperCase();
-            var px = priceMap.getOrDefault(sym, BigDecimal.ZERO);
-            var value = (r.qty() == null ? BigDecimal.ZERO : r.qty().multiply(px, MC));
+        for (var r : filteredRows) {
+            if (r.assetCanonical() == null) continue; // unmapped → zero value, skip
+            String sym = r.assetCanonical().toUpperCase(Locale.ROOT);
+            BigDecimal px  = priceMap.getOrDefault(sym, BigDecimal.ZERO);
+            BigDecimal qty = (r.qty() == null ? BigDecimal.ZERO : r.qty());
+            BigDecimal value = qty.multiply(px, MC);
             byAsset.merge(sym, value, BigDecimal::add);
         }
 
         BigDecimal grand = byAsset.values().stream().reduce(BigDecimal.ZERO, BigDecimal::add);
-        final BigDecimal threshold =
+        BigDecimal threshold =
                 (minPct != null && minPct > 0 && grand.signum() > 0)
                         ? grand.multiply(BigDecimal.valueOf(minPct), MC)
                         : BigDecimal.ZERO;
@@ -119,31 +114,25 @@ public class PortfolioValuationService {
                 .toList();
     }
 
-    /** Pie labels & values; group small slices into OTHER if below minPct. */
-    public PieData pieData(String accountRef, String vs, double minPct, String exFilter) {
-        var rows = loadLatestBalances(accountRef);
+    /** Pie data; unmapped assets contribute zero and are not labeled. */
+    public PieData pieData(String accountRef, String vs, double minPct, @Nullable String exFilter) {
+        var filteredRows = loadLatestFromDao(accountRef, normalizedExchangeFilter(exFilter));
 
-        Stream<BalanceRow> stream = rows.stream();
-
-        // Apply platform filter only when provided and not "total"
-        if (exFilter != null && !"total".equalsIgnoreCase(exFilter)) {
-            final String ex = exFilter; // keep as-is; use equalsIgnoreCase below
-            stream = stream.filter(r -> r.platform() != null && r.platform().equalsIgnoreCase(ex));
-        }
-
-        var symbols = stream
-                .map(BalanceRow::asset)
+        var symbols = filteredRows.stream()
+                .map(BalanceRow::assetCanonical)
                 .filter(Objects::nonNull)
-                .map(String::toUpperCase)
+                .map(s -> s.toUpperCase(Locale.ROOT))
                 .collect(Collectors.toCollection(LinkedHashSet::new));
 
         Map<String, BigDecimal> priceMap = priceBySymbol(symbols, vs);
 
         Map<String, BigDecimal> byAsset = new LinkedHashMap<>();
-        for (var r : rows) {
-            var sym = r.asset() == null ? "" : r.asset().toUpperCase();
-            var px = priceMap.getOrDefault(sym, BigDecimal.ZERO);
-            var value = (r.qty() == null ? BigDecimal.ZERO : r.qty().multiply(px, MC));
+        for (var r : filteredRows) {
+            if (r.assetCanonical() == null) continue; // unmapped → zero value, skip
+            String sym = r.assetCanonical().toUpperCase(Locale.ROOT);
+            BigDecimal px  = priceMap.getOrDefault(sym, BigDecimal.ZERO);
+            BigDecimal qty = (r.qty() == null ? BigDecimal.ZERO : r.qty());
+            BigDecimal value = qty.multiply(px, MC);
             byAsset.merge(sym, value, BigDecimal::add);
         }
 
@@ -156,11 +145,11 @@ public class PortfolioValuationService {
         List<BigDecimal> values = new ArrayList<>();
         BigDecimal other = BigDecimal.ZERO;
 
-        var entries = byAsset.entrySet().stream()
+        var ordered = byAsset.entrySet().stream()
                 .sorted(Map.Entry.<String, BigDecimal>comparingByValue().reversed())
                 .toList();
 
-        for (var e : entries) {
+        for (var e : ordered) {
             if (e.getValue().compareTo(cutoff) >= 0) {
                 labels.add(e.getKey());
                 values.add(e.getValue());
@@ -172,29 +161,32 @@ public class PortfolioValuationService {
             labels.add("OTHER");
             values.add(other);
         }
-
         return new PieData(labels, values);
     }
 
     // ==================== helpers ====================
 
-    /**
-     * Convert ticker symbols to CoinGecko IDs, fetch simple prices, then map back to SYMBOL -> price.
-     */
+    /** Normalize exchange filter: null/blank/"total" → null; else lowercase. */
+    private static String normalizedExchangeFilter(@Nullable String exFilter) {
+        if (exFilter == null) return null;
+        if (exFilter.isBlank()) return null;
+        if ("total".equalsIgnoreCase(exFilter)) return null;
+        return exFilter.toLowerCase(Locale.ROOT);
+    }
+
+    /** Fetch prices by canonical symbol; unmapped symbols are not requested. */
     private Map<String, BigDecimal> priceBySymbol(Collection<String> symbols, String vs) {
         if (symbols == null || symbols.isEmpty()) return Map.of();
 
-        // SYMBOL -> id (fallback to lowercase)
         Map<String, String> symToId = new LinkedHashMap<>();
         for (String sym : symbols) {
             String id = toGeckoId(sym);
-            if (id != null) symToId.put(sym, id);
+            if (id != null && !id.isBlank()) symToId.put(sym, id);
         }
-
         if (symToId.isEmpty()) return Map.of();
 
-        // Call CoinGecko with IDs
-        Map<String, BigDecimal> idToPrice = prices.getSimplePrice(new LinkedHashSet<>(symToId.values()), vs.toLowerCase(Locale.ROOT));
+        Map<String, BigDecimal> idToPrice =
+                prices.getSimplePrice(new LinkedHashSet<>(symToId.values()), vs.toLowerCase(Locale.ROOT));
         if (idToPrice == null) idToPrice = Map.of();
 
         // Map back: SYMBOL -> price

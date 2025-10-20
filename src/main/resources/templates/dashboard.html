@@ -156,10 +156,15 @@ createApp({
               sort: {
                 compare: (a, b) => (a === 'Total') - (b === 'Total') || String(a).localeCompare(String(b))
               },
-              formatter: (cell, row) =>
-                row?.cells?.[0]?.data === 'Total'
-                  ? gridjs.html('<strong>Total</strong>')
-                  : cell
+              formatter: (cell, row) => {
+                const label = row?.cells?.[0]?.data;
+                if (label === 'Total') {
+                  // clicking Total switches to aggregate view
+                  return gridjs.html(`<a href="#" class="pl-filter" data-ex="total"><strong>Total</strong></a>`);
+                }
+                // clicking binance/kraken filters the right card
+                return gridjs.html(`<a href="#" class="pl-filter" data-ex="${String(cell).toLowerCase()}">${cell}</a>`);
+              }
             },
             {
               name: `Value (${this.vs.toUpperCase()})`,
@@ -168,15 +173,15 @@ createApp({
               // (Grid.js cell-only comparator can’t easily detect the row to push it down)
               sort: false,
               formatter: (cell, row) => {
-                const v = gbpFmt(cell);
-                return row?.cells?.[0]?.data === 'Total'
-                  ? gridjs.html(`<strong>${v}</strong>`)
-                  : gridjs.html(v);
+                const isTotal = row?.cells?.[0]?.data === 'Total';
+                const html = gbpFmt(cell);
+                return gridjs.html(isTotal ? `<strong>${html}</strong>` : html);
               }
             }
           ];
 
-          if (!this.platformGrid) {
+          const rendered = !!this.platformGrid;
+          if (!rendered) {
             this.platformGrid = new gridjs.Grid({
               columns: platColumns,
               data: platRows,
@@ -189,6 +194,19 @@ createApp({
             this.platformGrid
               .updateConfig({ columns: platColumns, data: platRows })
               .forceRender();
+          }
+
+          // one-time delegated click handler for the links inside the grid
+          if (!rendered) {
+            platEl.addEventListener('click', (ev) => {
+              const a = ev.target.closest('a.pl-filter');
+              if (!a) return;
+              ev.preventDefault();
+              const ex = a.getAttribute('data-ex'); // 'binance' | 'kraken' | 'total'
+              if (!ex) return;
+              this.exchangeFilter = ex;
+              this.applyExchangeFilter();
+            });
           }
       }
 

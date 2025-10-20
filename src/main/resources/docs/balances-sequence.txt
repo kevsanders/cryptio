@@ -1,0 +1,21 @@
+sequenceDiagram
+  autonumber
+  actor User as User
+  participant UI as Browser /balances
+  participant C as BalancesController
+  participant V as BalanceViewDao
+  participant DB as Database (balance_snapshot, asset, asset_alias, v_latest_balance)
+
+  User->>UI: GET /balances?account=primary[&exchange=...][&asOf=...]
+  UI->>C: MVC request
+  Note over C: No ingest here. Always read.
+  C->>V: latest(account, optional exchange, optional asOfTs)
+  alt "asOf" provided
+    V->>DB: Query latest snapshot ≤ asOf per (exchange_account_id, asset_id)
+  else no "asOf"
+    V->>DB: Query latest snapshot (max(as_of)) per (exchange_account_id, asset_id)
+  end
+  Note over V,DB: Join raw asset to canonical using alias map<br/>Normalization in SQL (DAO layer)
+  DB-->>V: Rows: exchange, account, asset(canonical), free, locked, total, asOf
+  V-->>C: List<BalanceRow>
+  C-->>UI: Render balances view (table + charts)

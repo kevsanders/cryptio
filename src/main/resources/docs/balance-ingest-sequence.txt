@@ -1,0 +1,34 @@
+sequenceDiagram
+  autonumber
+  actor User as User
+  participant UI as Browser
+  participant IC as IngestController
+  participant S as BalanceIngestService
+  participant B as BinanceSignedClient
+  participant K as KrakenSignedClient
+  participant DB as Database
+
+  User->>UI: Click "Refresh" / Ingest button
+  UI->>IC: POST /balances/refresh?account=primary
+  IC->>S: ingestAll(account)  (async or sync)
+  par Binance
+    S->>B: fetchSpotBalances()  // raw symbols (no normalization)
+    B-->>S: Map<rawSymbol, qty>
+    S->>DB: load latest snapshot for account (per asset)  // baseline
+    loop for each (rawSymbol, qty)
+      S->>DB: Ensure exchange_account, asset (canonical by symbol only), and asset_alias(exchange, alias=rawSymbol)
+      alt CHANGED since baseline? (qty != last.total OR missing)
+        S->>DB: INSERT new balance_snapshot (raw exchange_symbol, free=qty, locked=0, as_of=now, ingest_id=UUID)
+      else unchanged
+        Note right of S: skip write
+      end
+    end
+    Note over S,DB: Handle disappearances: if an asset existed but is<br/>absent now → write snapshot total=0 (tombstone)
+  and Kraken
+    S->>K: fetchSpotBalances()
+    K-->>S: Map<rawSymbol, qty>  // keep raw (e.g. XETH, XXBT)
+    S->>DB: Same delta logic as Binance branch
+  end
+  S-->>IC: counts (inserted, unchanged, zeroed)
+  IC-->>UI: 200/202 + summary (optional toast)
+  Note over UI: UI may then re-GET /balances (read path above)
